@@ -226,3 +226,5 @@ tests_artifacts/
 *.html
 *.ipynb
 reports/
+data_cache/
+*.zip
