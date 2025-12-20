@@ -43,6 +43,57 @@ from trading_rl.data.indicators import add_talib_indicators
 # Helpers
 # ---------------------------------------------------------------------
 
+import yaml  # at top
+from copy import deepcopy
+
+
+def load_regimes(path: str) -> list[dict]:
+    p = Path(path)
+    if not p.exists():
+        raise FileNotFoundError(f"--regimes not found: {p}")
+
+    if p.suffix.lower() in {".yaml", ".yml"}:
+        data = yaml.safe_load(p.read_text(encoding="utf-8"))
+    elif p.suffix.lower() == ".json":
+        data = json.loads(p.read_text(encoding="utf-8"))
+    else:
+        raise ValueError("Regimes file must be .yaml/.yml or .json")
+    if not isinstance(data, list) or not data:
+        raise ValueError("Regimes file must contain a non-empty list of regime objects")
+
+    # minimal schema validation
+    required = {"name", "start", "end", "eval_start", "eval_end"}
+    for i, r in enumerate(data):
+        if not isinstance(r, dict):
+            raise ValueError(f"Regime[{i}] must be a dict")
+        missing = required - set(r.keys())
+        if missing:
+            raise ValueError(f"Regime[{i}] missing keys: {sorted(missing)}")
+
+    return data
+
+
+def apply_regime(args, regime: dict):
+    a = deepcopy(args)
+
+    # required
+    a.start = regime["start"]
+    a.end = regime["end"]
+    a.eval_start = regime["eval_start"]
+    a.eval_end = regime["eval_end"]
+
+    # optional overrides
+    if "symbol" in regime:
+        a.symbol = regime["symbol"]
+    if "timeframe" in regime:
+        a.timeframe = regime["timeframe"]
+    if "warmup_days" in regime:
+        a.warmup_days = int(regime["warmup_days"])
+
+    # attach name for logging
+    a.regime_name = regime["name"]
+    return a
+
 
 def parse_list(arg: str | Iterable[str]) -> List[str]:
     if isinstance(arg, str):
@@ -198,7 +249,7 @@ def train_once(
 ):
     hp = args.hyperparams_data or {}
     algo_params = merged_algo_params(hp, algo, seed)
-    env_params = env_cfg(hp)
+    env_params = env_cfg(hp, algo)
     vn_params = vecnormalize_cfg(hp)
 
     # VecNormalize: allow YAML to set a default, CLI can override.
@@ -207,20 +258,36 @@ def train_once(
     else:
         normalize = bool(args.normalize)
 
+    regime_name = getattr(args, "regime_name", "default")
+    auto_group = f"{regime_name}-{algo}-{env_name}"
+    group = f"{args.group}-{auto_group}" if args.group else auto_group
+
+    env_window_size = "full" if env_name != "windowed" else hp["env"]["window_size"]
+
     run = wandb.init(
         project=args.project,
         entity=args.entity,
-        group=args.group,
+        group=group,
         config={
             "algo": algo,
             "env": env_name,
+            "env_window_size": env_window_size,
             "seed": seed,
             "total_timesteps": args.total_timesteps,
             "eval_freq": args.eval_freq,
             "eval_episodes": args.eval_episodes,
             "normalize": normalize,
+            "regime": getattr(args, "regime_name", "default"),
+            "start": args.start,
+            "end": args.end,
+            "eval_start": args.eval_start,
+            "eval_end": args.eval_end,
+            "symbol": args.symbol,
+            "timeframe": args.timeframe,
+            "hyperparams": hp,
+            "config": args,
         },
-        name=args.run_name or f"{algo}-{env_name}-seed{seed}",
+        name=args.run_name or f"{algo}-{env_name}-{regime_name}-seed{seed}",
         resume="allow" if args.resume else None,
         sync_tensorboard=True,
         monitor_gym=False,
@@ -464,6 +531,19 @@ def parse_args():
         help="Extra days to fetch before start for indicator warmup.",
     )
 
+    parser.add_argument(
+        "--regimes",
+        type=str,
+        default=None,
+        help="Path to YAML/JSON regimes file. If provided, overrides --start/--end/--eval-start/--eval-end.",
+    )
+    parser.add_argument(
+        "--regime",
+        type=str,
+        default=None,
+        help="Optional: run only a single regime by name (must exist in --regimes file).",
+    )
+
     args = parser.parse_args()
 
     algos = parse_list(args.algos)
@@ -487,42 +567,63 @@ def parse_args():
 def main():
     args = parse_args()
 
-    df_raw = load_market_data(args)
+    # Determine regimes list
+    if args.regimes:
+        regimes = load_regimes(args.regimes)
+        if args.regime:
+            regimes = [r for r in regimes if r["name"] == args.regime]
+            if not regimes:
+                raise ValueError(
+                    f"--regime '{args.regime}' not found in {args.regimes}"
+                )
+    else:
+        # single implicit regime from CLI dates
+        regimes = [
+            {
+                "name": "default",
+                "start": args.start,
+                "end": args.end,
+                "eval_start": args.eval_start,
+                "eval_end": args.eval_end,
+            }
+        ]
 
-    df_feat = add_talib_indicators(df_raw)
-
-    start_ts = _ts_like_index(df_feat, args.start)
-    end_ts = _ts_like_index(df_feat, args.end)
-    df_feat = df_feat.loc[start_ts:end_ts]
-
-    print("index tz:", df_feat.index.tz)
-    print("min:", df_feat.index.min(), "max:", df_feat.index.max())
-    print("start_ts:", start_ts, "end_ts:", end_ts)
-    print("rows after clip:", len(df_feat))
-
-    train_df, eval_df = split_train_eval(df_feat, args)
-
-    window_size = int(args.hyperparams_data.get("env", {}).get("window_size", 512))
-    min_len = window_size + 2
-    assert len(train_df) >= min_len, f"train_df too short: {len(train_df)} < {min_len}"
-    assert len(eval_df) >= min_len, f"eval_df too short: {len(eval_df)} < {min_len}"
-
-    md_train = prepare_market_arrays(train_df)
-    md_eval = prepare_market_arrays(eval_df)
-
+    # algo/env/seed combos (shared across regimes)
     combos = expand_matrix(args.algos, args.envs, args.seeds)
 
-    for combo in combos:
-        train_once(
-            combo["algo"],
-            combo["env"],
-            combo["seed"],
-            md_train,
-            md_eval,
-            train_df,
-            eval_df,
-            args,
-        )
+    for regime in regimes:
+        rargs = apply_regime(args, regime)
+
+        df_raw = load_market_data(rargs)
+        df_feat = add_talib_indicators(df_raw)
+
+        start_ts = _ts_like_index(df_feat, rargs.start)
+        end_ts = _ts_like_index(df_feat, rargs.end)
+        df_feat = df_feat.loc[start_ts:end_ts]
+
+        train_df, eval_df = split_train_eval(df_feat, rargs)
+
+        window_size = int(rargs.hyperparams_data.get("env", {}).get("window_size", 512))
+        min_len = window_size + 2
+        if len(train_df) < min_len or len(eval_df) < min_len:
+            raise ValueError(
+                f"[{rargs.regime_name}] too short: train={len(train_df)}, eval={len(eval_df)}, need>={min_len}"
+            )
+
+        md_train = prepare_market_arrays(train_df)
+        md_eval = prepare_market_arrays(eval_df)
+
+        for combo in combos:
+            train_once(
+                combo["algo"],
+                combo["env"],
+                combo["seed"],
+                md_train,
+                md_eval,
+                train_df,
+                eval_df,
+                rargs,
+            )
 
 
 if __name__ == "__main__":

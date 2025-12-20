@@ -56,6 +56,13 @@ def merged_algo_params(hp: Mapping[str, Any], algo: str, seed: int) -> Dict[str,
     shared = dict(hp.get("shared", {}) or {})
     algo_cfg = dict(hp.get(algo, {}) or {})
 
+    # --- strip non-SB3 blocks (these must NOT go into PPO/A2C/SAC/TD3 kwargs) ---
+    # per-algo env override lives under "<algo>: env: ..."
+    algo_cfg.pop("env", None)
+    # defensive: if you ever add per-algo vecnormalize overrides
+    algo_cfg.pop("vecnormalize", None)
+    # --------------------------------------------------------------------------
+
     if "policy_kwargs" in shared:
         shared["policy_kwargs"] = resolve_policy_kwargs(shared.get("policy_kwargs"))
     if "policy_kwargs" in algo_cfg:
@@ -66,8 +73,24 @@ def merged_algo_params(hp: Mapping[str, Any], algo: str, seed: int) -> Dict[str,
     return merged
 
 
-def env_cfg(hp: Mapping[str, Any]) -> Dict[str, Any]:
-    return dict(hp.get("env", {}) or {})
+def _merge_dicts(base: dict, override: dict) -> dict:
+    out = dict(base or {})
+    for k, v in (override or {}).items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = _merge_dicts(out[k], v)  # recursive merge (nice for nested)
+        else:
+            out[k] = v
+    return out
+
+
+def env_cfg(hp: dict, algo: str | None = None) -> dict:
+    base = hp.get("env", {}) or {}
+    if algo is None:
+        return dict(base)
+
+    algo_block = hp.get(algo.lower(), {}) or {}
+    override = algo_block.get("env", {}) or {}
+    return _merge_dicts(base, override)
 
 
 def vecnormalize_cfg(hp: Mapping[str, Any]) -> Dict[str, Any]:

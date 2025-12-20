@@ -1,3 +1,4 @@
+# trading_rl\registry.py
 """
 Registries for algorithms and environments.
 
@@ -12,7 +13,12 @@ from typing import Callable, Dict, Iterable, Tuple
 
 import numpy as np
 from stable_baselines3 import A2C, PPO, SAC, TD3
-from stable_baselines3.common.vec_env import DummyVecEnv, VecEnv, VecNormalize
+from stable_baselines3.common.vec_env import (
+    DummyVecEnv,
+    VecEnv,
+    VecNormalize,
+    SubprocVecEnv,
+)
 
 from trading_rl.envs.trading_env import TradingEnv, TradingEnvConfig
 from trading_rl.envs.windowed_wrapper import (
@@ -20,6 +26,7 @@ from trading_rl.envs.windowed_wrapper import (
     WindowedTradingEnv,
 )
 
+from stable_baselines3.common.noise import NormalActionNoise
 # -----------------------------
 # Algo registry
 # -----------------------------
@@ -51,6 +58,16 @@ def _sac_factory(env: VecEnv, params: dict):
 
 def _td3_factory(env: VecEnv, params: dict):
     policy = params.pop("policy", "MlpPolicy")
+
+    exploration_sigma = float(params.pop("exploration_noise", 0.1))
+
+    if "action_noise" not in params:
+        n_actions = int(np.prod(env.action_space.shape))
+        params["action_noise"] = NormalActionNoise(
+            mean=np.zeros(n_actions, dtype=np.float32),
+            sigma=exploration_sigma * np.ones(n_actions, dtype=np.float32),
+        )
+
     return TD3(policy, env, **params)
 
 
@@ -92,11 +109,16 @@ def _make_windowed_env(
     cfg: dict,
 ):
     requested_window = int(cfg.get("window_size", min(512, len(train_prices) - 1)))
-    # WindowedTradingEnv needs window_size+1 points to run window_size steps.
     window_size = min(requested_window, max(1, len(train_prices) - 1))
-    window_cfg = cfg.get("window_cfg") or WindowedEnvConfig(
+
+    # NEW: vectorization knobs
+    n_envs_train = int(cfg.get("n_envs_train", 1))
+    n_envs_eval = int(cfg.get("n_envs_eval", 1))
+    vec_env_type = str(cfg.get("vec_env_type", "dummy"))
+
+    window_cfg_train = cfg.get("window_cfg") or WindowedEnvConfig(
         window_size=window_size,
-        random_start=cfg.get("random_start", True),
+        random_start=bool(cfg.get("random_start", True)),
     )
     env_cfg = cfg.get("env_cfg") or TradingEnvConfig(
         trading_cost_pct=float(cfg.get("trading_cost_pct", 0.001)),
@@ -111,31 +133,39 @@ def _make_windowed_env(
 
     if not isinstance(env_cfg, TradingEnvConfig):
         raise TypeError(f"env_cfg must be TradingEnvConfig, got {type(env_cfg)}")
+    if not isinstance(window_cfg_train, WindowedEnvConfig):
+        raise TypeError(
+            f"window_cfg must be WindowedEnvConfig, got {type(window_cfg_train)}"
+        )
 
-    if not isinstance(window_cfg, WindowedEnvConfig):
-        raise TypeError(f"window_cfg must be WindowedEnvConfig, got {type(window_cfg)}")
-
-    def train_fn():
+    def make_train_env():
         return WindowedTradingEnv(
             prices=train_prices,
             features=train_features,
             env_config=env_cfg,
-            window_cfg=window_cfg,
+            window_cfg=window_cfg_train,
         )
 
-    def eval_fn():
+    # Eval should be deterministic windows (start at 0)
+    window_cfg_eval = WindowedEnvConfig(
+        window_size=window_size,
+        random_start=False,
+    )
+
+    def make_eval_env():
         return WindowedTradingEnv(
             prices=eval_prices,
             features=eval_features,
             env_config=env_cfg,
-            window_cfg=WindowedEnvConfig(
-                window_size=window_size,
-                random_start=False,  # deterministic eval
-            ),
+            window_cfg=window_cfg_eval,
         )
 
-    train_env = DummyVecEnv([train_fn])
-    eval_env = DummyVecEnv([eval_fn])
+    train_fns = [lambda: make_train_env() for _ in range(n_envs_train)]
+    eval_fns = [lambda: make_eval_env() for _ in range(n_envs_eval)]
+
+    train_env = _build_vec_env(train_fns, vec_env_type)
+    eval_env = _build_vec_env(eval_fns, vec_env_type if n_envs_eval > 1 else "dummy")
+
     return train_env, eval_env
 
 
@@ -179,6 +209,21 @@ def get_env_builder(name: str) -> EnvBuilder:
     if key not in ENV_REGISTRY:
         raise KeyError(f"Unknown env '{name}'. Available: {list(ENV_REGISTRY)}")
     return ENV_REGISTRY[key]
+
+
+def _build_vec_env(env_fns, vec_env_type: str):
+    vec_env_type = (vec_env_type or "dummy").lower()
+    if vec_env_type == "dummy":
+        return DummyVecEnv(env_fns)
+
+    if vec_env_type == "subproc":
+        # On Windows, SubprocVecEnv uses spawn; keep this only if needed.
+        # It should work as long as you run from a __main__-guarded entrypoint (you do).
+        return SubprocVecEnv(env_fns, start_method="spawn")
+
+    raise ValueError(
+        f"Unknown vec_env_type='{vec_env_type}'. Use 'dummy' or 'subproc'."
+    )
 
 
 # -----------------------------
