@@ -28,7 +28,7 @@ ppo:
   vf_coef: 0.5
   max_grad_norm: 0.5
   env:
-    n_envs_train: 8
+    n_envs_train: 1
 
 a2c:
   learning_rate: 3.0e-4
