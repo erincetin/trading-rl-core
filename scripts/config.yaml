@@ -18,6 +18,8 @@ experiments:
       ent_coef: 0.001
       vf_coef: 0.5
       max_grad_norm: 0.5
+    run:
+      total_timesteps: 1000000
 
     env:
       n_envs_train: 8
@@ -60,6 +62,8 @@ experiments:
       train_freq: 1
       gradient_steps: 1
       learning_starts: 10000
+    run:
+      total_timesteps: 250000
 
     env:
       n_envs_train: 1
@@ -88,6 +92,22 @@ experiments:
 
     env:
       n_envs_train: 1
+
+run:
+  envs: [windowed]
+  seeds: [13, 42, 67, 69, 91]
+  total_timesteps: 250000
+  eval_freq: 8192
+  eval_episodes: 1
+  wandb_log_freq: 1024
+  sb3_log_interval: null
+  output_dir: models
+  cache_dir: data_cache
+  csv_path: null
+  normalize: null
+  vecnorm_path: null
+  resume: false
+  checkpoint: null
 
 vecnormalize:
   enable: true

@@ -20,13 +20,18 @@ def test_resolve_policy_kwargs_activation_fn():
 def test_merged_algo_params_strips_non_sb3_blocks():
     hp = {
         "shared": {"learning_rate": 0.001},
-        "ppo": {"env": {"window_size": 10}, "vecnormalize": {"enable": True}},
+        "ppo": {
+            "env": {"window_size": 10},
+            "vecnormalize": {"enable": True},
+            "run": {"total_timesteps": 1000},
+        },
     }
     params = merged_algo_params(hp, "ppo", seed=123)
     assert params["learning_rate"] == 0.001
     assert params["seed"] == 123
     assert "env" not in params
     assert "vecnormalize" not in params
+    assert "run" not in params
 
 
 def test_env_cfg_merges_algo_override():
@@ -67,6 +72,8 @@ experiments:
       verbose: 1
     env:
       window_size: 5
+    run:
+      total_timesteps: 123
 env:
   trading_cost_pct: 0.1
 vecnormalize:
@@ -86,6 +93,7 @@ regimes:
     assert "experiments" not in hp
     assert hp["ppo"]["learning_rate"] == 0.01
     assert hp["ppo"]["env"]["window_size"] == 5
+    assert hp["ppo"]["run"]["total_timesteps"] == 123
     assert hp["env"]["trading_cost_pct"] == 0.1
     assert hp["vecnormalize"]["enable"] is True
     assert hp["regimes"][0]["name"] == "r0"
@@ -106,6 +114,19 @@ experiments:
   ppo: []
 """
     path = tmp_path / "bad_entry.yaml"
+    path.write_text(content, encoding="utf-8")
+
+    with pytest.raises(ValueError):
+        load_hyperparams(str(path))
+
+
+def test_load_hyperparams_invalid_run_entry(tmp_path):
+    content = """
+experiments:
+  ppo:
+    run: []
+"""
+    path = tmp_path / "bad_run.yaml"
     path.write_text(content, encoding="utf-8")
 
     with pytest.raises(ValueError):

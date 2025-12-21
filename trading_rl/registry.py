@@ -146,19 +146,9 @@ def _make_windowed_env(
             window_cfg=window_cfg_train,
         )
 
-    # Eval should be deterministic windows (start at 0)
-    window_cfg_eval = WindowedEnvConfig(
-        window_size=window_size,
-        random_start=False,
-    )
-
+    # Eval on the full series (unwindowed) to measure end-to-end performance.
     def make_eval_env():
-        return WindowedTradingEnv(
-            prices=eval_prices,
-            features=eval_features,
-            env_config=env_cfg,
-            window_cfg=window_cfg_eval,
-        )
+        return TradingEnv(prices=eval_prices, features=eval_features, config=env_cfg)
 
     train_fns = [lambda: make_train_env() for _ in range(n_envs_train)]
     eval_fns = [lambda: make_eval_env() for _ in range(n_envs_eval)]

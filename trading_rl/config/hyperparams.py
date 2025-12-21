@@ -37,6 +37,12 @@ def _normalize_hyperparams(hp: dict) -> dict:
                 raise ValueError(f"experiment '{name}'.vecnormalize must be a mapping")
             algo_cfg["vecnormalize"] = vec_cfg
 
+        run_cfg = cfg.get("run", None)
+        if run_cfg is not None:
+            if not isinstance(run_cfg, dict):
+                raise ValueError(f"experiment '{name}'.run must be a mapping")
+            algo_cfg["run"] = run_cfg
+
         out[name] = algo_cfg
 
     return out
@@ -93,6 +99,8 @@ def merged_algo_params(hp: Mapping[str, Any], algo: str, seed: int) -> Dict[str,
     algo_cfg.pop("env", None)
     # defensive: if you ever add per-algo vecnormalize overrides
     algo_cfg.pop("vecnormalize", None)
+    # run config belongs to runner, not SB3
+    algo_cfg.pop("run", None)
     # --------------------------------------------------------------------------
 
     if "policy_kwargs" in shared:

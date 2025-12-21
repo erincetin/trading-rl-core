@@ -43,6 +43,68 @@ def parse_list(arg: str | Iterable[str]) -> List[str]:
     return list(arg)
 
 
+def _merge_dicts(base: dict, override: dict) -> dict:
+    out = dict(base or {})
+    for k, v in (override or {}).items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = _merge_dicts(out[k], v)
+        else:
+            out[k] = v
+    return out
+
+
+def _resolve_run_cfg(hp: dict, algo: str) -> dict:
+    base = hp.get("run", {}) or {}
+    algo_block = hp.get(algo.lower(), {}) or {}
+    override = algo_block.get("run", {}) or {}
+    return _merge_dicts(base, override)
+
+
+def _apply_run_cfg(args, run_cfg: dict, *, per_algo: bool) -> None:
+    if not run_cfg:
+        return
+
+    if per_algo:
+        keys = [
+            "total_timesteps",
+            "eval_freq",
+            "eval_episodes",
+            "normalize",
+            "vecnorm_path",
+            "resume",
+            "checkpoint",
+            "wandb_log_freq",
+            "sb3_log_interval",
+            "output_dir",
+        ]
+    else:
+        keys = [
+            "envs",
+            "seeds",
+            "repeats",
+            "total_timesteps",
+            "eval_freq",
+            "eval_episodes",
+            "normalize",
+            "vecnorm_path",
+            "resume",
+            "checkpoint",
+            "wandb_log_freq",
+            "sb3_log_interval",
+            "output_dir",
+            "cache_dir",
+            "csv_path",
+        ]
+
+    for key in keys:
+        if key not in run_cfg:
+            continue
+        if per_algo:
+            setattr(args, key, run_cfg[key])
+        elif getattr(args, key) is None:
+            setattr(args, key, run_cfg[key])
+
+
 def expand_matrix(
     regimes: Sequence[dict],
     algos: Sequence[str],
@@ -100,10 +162,10 @@ def parse_args():
         "--algos", type=str, default="ppo", help="Comma-separated algo names."
     )
     parser.add_argument(
-        "--envs", type=str, default="windowed", help="Comma-separated env names."
+        "--envs", type=str, default=None, help="Comma-separated env names."
     )
     parser.add_argument(
-        "--seeds", type=str, default="42", help="Comma-separated seeds."
+        "--seeds", type=str, default=None, help="Comma-separated seeds."
     )
     parser.add_argument(
         "--repeats",
@@ -112,9 +174,9 @@ def parse_args():
         help="If set, seeds will be range(repeats).",
     )
 
-    parser.add_argument("--total-timesteps", type=int, default=100_000)
-    parser.add_argument("--eval-freq", type=int, default=10_000)
-    parser.add_argument("--eval-episodes", type=int, default=1)
+    parser.add_argument("--total-timesteps", type=int, default=None)
+    parser.add_argument("--eval-freq", type=int, default=None)
+    parser.add_argument("--eval-episodes", type=int, default=None)
 
     norm_group = parser.add_mutually_exclusive_group()
     norm_group.add_argument(
@@ -133,7 +195,10 @@ def parse_args():
         help="Path to VecNormalize stats for resume/eval.",
     )
     parser.add_argument(
-        "--resume", action="store_true", help="Resume an existing checkpoint."
+        "--resume",
+        action="store_true",
+        default=None,
+        help="Resume an existing checkpoint.",
     )
     parser.add_argument(
         "--checkpoint",
@@ -150,7 +215,7 @@ def parse_args():
     parser.add_argument(
         "--wandb-log-freq",
         type=int,
-        default=1000,
+        default=None,
         help="Log train metrics to W&B every N steps.",
     )
     parser.add_argument(
@@ -160,8 +225,8 @@ def parse_args():
         help="SB3 logger dump interval (episodes).",
     )
 
-    parser.add_argument("--output-dir", type=str, default="models")
-    parser.add_argument("--cache-dir", type=str, default="data_cache")
+    parser.add_argument("--output-dir", type=str, default=None)
+    parser.add_argument("--cache-dir", type=str, default=None)
     parser.add_argument(
         "--csv-path", type=str, default=None, help="Local CSV with OHLCV data."
     )
@@ -214,16 +279,40 @@ def parse_args():
 
     args = parser.parse_args()
 
-    args.algos = parse_list(args.algos)
-    args.envs = parse_list(args.envs)
-    args.seeds = (
-        list(range(args.repeats))
-        if args.repeats is not None
-        else [int(s) for s in parse_list(args.seeds)]
-    )
     args.hyperparams_data = (
         load_hyperparams(args.hyperparams) if args.hyperparams else {}
     )
+
+    args.algos = parse_list(args.algos)
+    _apply_run_cfg(args, args.hyperparams_data.get("run", {}) or {}, per_algo=False)
+
+    if args.envs is None:
+        raise ValueError("envs not set. Add run.envs in config.yaml or pass --envs.")
+    args.envs = parse_list(args.envs)
+
+    if args.repeats is None and args.seeds is None:
+        raise ValueError(
+            "seeds not set. Add run.seeds or run.repeats in config.yaml "
+            "or pass --seeds/--repeats."
+        )
+    args.seeds = (
+        list(range(int(args.repeats)))
+        if args.repeats is not None
+        else [int(s) for s in parse_list(args.seeds)]
+    )
+
+    if args.total_timesteps is None:
+        args.total_timesteps = 100_000
+    if args.eval_freq is None:
+        args.eval_freq = 10_000
+    if args.eval_episodes is None:
+        args.eval_episodes = 1
+    if args.wandb_log_freq is None:
+        args.wandb_log_freq = 1000
+    if args.output_dir is None:
+        args.output_dir = "models"
+    if args.cache_dir is None:
+        args.cache_dir = "data_cache"
 
     return args
 
@@ -261,6 +350,8 @@ def main():
     for combo in combos:
         # apply regime -> returns args-like object with overrides + regime_name
         rargs = apply_regime(args, combo["regime"])
+        run_cfg = _resolve_run_cfg(args.hyperparams_data or {}, combo["algo"])
+        _apply_run_cfg(rargs, run_cfg, per_algo=True)
 
         # data
         df_raw = load_market_data(
@@ -288,14 +379,21 @@ def main():
             eval_end=rargs.eval_end,
         )
 
-        # minimum length sanity (windowed env needs window_size+2)
+        # minimum length sanity checks
         env_hp = (rargs.hyperparams_data or {}).get("env", {}) or {}
         window_size = int(env_hp.get("window_size", 512))
-        min_len = window_size + 2
-        if len(train_df) < min_len or len(eval_df) < min_len:
+        if combo["env"] == "windowed":
+            min_train_len = window_size + 1
+            min_eval_len = 2
+        else:
+            min_train_len = 2
+            min_eval_len = 2
+
+        if len(train_df) < min_train_len or len(eval_df) < min_eval_len:
             raise ValueError(
                 f"[{getattr(rargs, 'regime_name', 'default')}] too short: "
-                f"train={len(train_df)}, eval={len(eval_df)}, need>={min_len}"
+                f"train={len(train_df)} (need>={min_train_len}), "
+                f"eval={len(eval_df)} (need>={min_eval_len})"
             )
 
         md_train = prepare_market_arrays(train_df)

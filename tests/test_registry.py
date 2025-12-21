@@ -70,3 +70,21 @@ def test_windowed_env_builder_respects_num_envs():
     action = np.zeros((train_env.num_envs, 1), dtype=np.float32)
     step_out = train_env.step(action)
     assert len(step_out) == 4
+
+
+def test_windowed_env_builder_uses_full_eval_env():
+    pytest.importorskip("stable_baselines3")
+    prices = np.linspace(1, 2, 6).astype(np.float32)
+    feats = np.zeros((6, 2), dtype=np.float32)
+
+    env_builder = get_env_builder("windowed")
+    _, eval_env = env_builder.factory(
+        prices,
+        feats,
+        prices,
+        feats,
+        {"window_size": 3, "random_start": False},
+    )
+
+    base = eval_env.envs[0].unwrapped
+    assert isinstance(base, TradingEnv)

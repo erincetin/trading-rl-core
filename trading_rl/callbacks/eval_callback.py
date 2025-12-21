@@ -100,9 +100,14 @@ class WandbEvalCallback(BaseCallback):
         base_env = venv.envs[0].unwrapped
         prices = base_env.prices
 
+        trade_cost = 0.001
+        cfg = getattr(base_env, "config", None)
+        if cfg is not None:
+            trade_cost = float(getattr(cfg, "trading_cost_pct", trade_cost))
+
         # Precompute baselines once
         bh_curve = compute_buy_and_hold(prices)
-        sma_curve = compute_sma_crossover(prices)
+        sma_curve = compute_sma_crossover(prices, cost=trade_cost)
 
         wandb.log(
             {
