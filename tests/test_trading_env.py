@@ -196,3 +196,17 @@ def test_env_validates_length_mismatch():
     feats = np.zeros((3, 1), dtype=np.float32)
     with pytest.raises(ValueError):
         TradingEnv(prices, feats, TradingEnvConfig())
+
+
+def test_env_rejects_non_positive_prices():
+    prices = np.array([1.0, 0.0], dtype=np.float32)
+    feats = np.zeros((2, 1), dtype=np.float32)
+    with pytest.raises(ValueError):
+        TradingEnv(prices, feats, TradingEnvConfig())
+
+
+def test_env_rejects_non_finite_features():
+    prices = np.array([1.0, 1.0], dtype=np.float32)
+    feats = np.array([[0.0], [np.nan]], dtype=np.float32)
+    with pytest.raises(ValueError):
+        TradingEnv(prices, feats, TradingEnvConfig())

@@ -1,9 +1,20 @@
 import numpy as np
 import pandas as pd
-import wandb
+
+
+def _validate_prices(prices) -> np.ndarray:
+    arr = np.asarray(prices, dtype=float)
+    if arr.size == 0:
+        raise ValueError("prices must be non-empty")
+    if not np.isfinite(arr).all():
+        raise ValueError("prices must be finite")
+    if (arr <= 0).any():
+        raise ValueError("prices must be > 0")
+    return arr
 
 
 def compute_buy_and_hold(prices):
+    prices = _validate_prices(prices)
     pv = prices / prices[0]
     return pv.tolist()
 
@@ -15,7 +26,7 @@ def compute_sma_crossover(prices, fast=20, slow=50, cost=0.001):
        - flat otherwise
     Includes trading costs.
     """
-    prices = pd.Series(prices)
+    prices = pd.Series(_validate_prices(prices))
 
     sma_fast = prices.rolling(fast).mean().shift(1)
     sma_slow = prices.rolling(slow).mean().shift(1)

@@ -47,6 +47,12 @@ class TradingEnv(gym.Env):
             raise ValueError(f"features must be shape (T, F), got {features.shape}")
         if len(prices) != len(features):
             raise ValueError("prices and features must have same length")
+        if not np.isfinite(prices).all():
+            raise ValueError("prices must be finite")
+        if not np.isfinite(features).all():
+            raise ValueError("features must be finite")
+        if (prices <= 0).any():
+            raise ValueError("prices must be > 0")
 
         self.prices = prices.astype("float32")
         self.features = features.astype("float32")
@@ -190,6 +196,8 @@ class TradingEnv(gym.Env):
         if mode in {"diff_return", "simple_return"}:
             reward = (pv1 - pv0) / pv0
         elif mode in {"log_return", "log"}:
+            if pv0 <= 0 or pv1 <= 0:
+                raise ValueError("portfolio_value must be > 0 for log_return")
             reward = float(np.log(pv1 / pv0))
         elif mode in {"pnl", "delta_pv"}:
             reward = pv1 - pv0

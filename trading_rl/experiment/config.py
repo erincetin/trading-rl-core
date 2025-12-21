@@ -83,8 +83,13 @@ def build_experiment_config(
     # resolve params
     algo_params = merged_algo_params(hyperparams, algo, seed)
     env_params = env_cfg(hyperparams, algo)
-    vecnorm_params = vecnormalize_cfg(hyperparams)
+    vecnorm_params = vecnormalize_cfg(hyperparams, algo)
     vecnorm_enabled = bool((hyperparams.get("vecnormalize") or {}).get("enable", False))
+    algo_vecnorm = (
+        (hyperparams.get(algo.lower(), {}) or {}).get("vecnormalize", {}) or {}
+    )
+    if "enable" in algo_vecnorm:
+        vecnorm_enabled = bool(algo_vecnorm.get("enable"))
     normalize = args.normalize if args.normalize is not None else vecnorm_enabled
 
     regime_name = regime["name"]

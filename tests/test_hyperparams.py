@@ -47,6 +47,17 @@ def test_vecnormalize_cfg_strips_enable_flag():
     assert cfg["clip_obs"] == 5.0
 
 
+def test_vecnormalize_cfg_merges_algo_override():
+    hp = {
+        "vecnormalize": {"enable": True, "clip_obs": 10.0},
+        "ppo": {"vecnormalize": {"norm_reward": True}},
+    }
+    cfg = vecnormalize_cfg(hp, "ppo")
+    assert "enable" not in cfg
+    assert cfg["clip_obs"] == 10.0
+    assert cfg["norm_reward"] is True
+
+
 def test_load_hyperparams_experiments_schema(tmp_path):
     content = """
 experiments:

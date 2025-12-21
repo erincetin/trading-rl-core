@@ -125,7 +125,14 @@ def env_cfg(hp: dict, algo: str | None = None) -> dict:
     return _merge_dicts(base, override)
 
 
-def vecnormalize_cfg(hp: dict) -> dict:
-    cfg = dict(hp.get("vecnormalize", {}) or {})
+def vecnormalize_cfg(hp: dict, algo: str | None = None) -> dict:
+    base = dict(hp.get("vecnormalize", {}) or {})
+    if algo is None:
+        cfg = base
+    else:
+        algo_block = hp.get(algo.lower(), {}) or {}
+        override = algo_block.get("vecnormalize", {}) or {}
+        cfg = _merge_dicts(base, override)
+
     cfg.pop("enable", None)  # <-- CRITICAL
     return cfg
