@@ -104,6 +104,7 @@ env:
   n_envs_train: 1
   n_envs_eval: 1
   vec_env_type: dummy  # dummy | subproc
+  verbose: 1
 
 regimes:
   - name: btc_2023_sideways_trainH1_evalQ4

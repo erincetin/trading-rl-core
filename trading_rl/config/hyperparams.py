@@ -8,12 +8,47 @@ import yaml
 DEFAULT_HYPERPARAMS_PATH = Path(__file__).with_name("sb3_finance_hyperparams.yaml")
 
 
+def _normalize_hyperparams(hp: dict) -> dict:
+    if not isinstance(hp, dict):
+        return {}
+
+    experiments = hp.get("experiments")
+    if experiments is None:
+        return hp
+    if not isinstance(experiments, dict):
+        raise ValueError("hyperparams 'experiments' must be a mapping")
+
+    out = {k: v for k, v in hp.items() if k != "experiments"}
+
+    for name, cfg in experiments.items():
+        if not isinstance(cfg, dict):
+            raise ValueError(f"experiment '{name}' must be a mapping")
+        algo_cfg = dict(cfg.get("algo", {}) or {})
+
+        env_cfg = cfg.get("env", None)
+        if env_cfg is not None:
+            if not isinstance(env_cfg, dict):
+                raise ValueError(f"experiment '{name}'.env must be a mapping")
+            algo_cfg["env"] = env_cfg
+
+        vec_cfg = cfg.get("vecnormalize", None)
+        if vec_cfg is not None:
+            if not isinstance(vec_cfg, dict):
+                raise ValueError(f"experiment '{name}'.vecnormalize must be a mapping")
+            algo_cfg["vecnormalize"] = vec_cfg
+
+        out[name] = algo_cfg
+
+    return out
+
+
 def load_hyperparams(path: str) -> dict:
     hp_path = Path(path)
     if not hp_path.exists():
         raise FileNotFoundError(f"Hyperparams file not found: {hp_path.resolve()}")
     with hp_path.open("r", encoding="utf-8") as f:
-        return yaml.safe_load(f) or {}
+        data = yaml.safe_load(f) or {}
+    return _normalize_hyperparams(data)
 
 
 def _resolve_activation_fn(name: Any):

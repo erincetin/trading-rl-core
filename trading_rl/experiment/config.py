@@ -84,6 +84,8 @@ def build_experiment_config(
     algo_params = merged_algo_params(hyperparams, algo, seed)
     env_params = env_cfg(hyperparams, algo)
     vecnorm_params = vecnormalize_cfg(hyperparams)
+    vecnorm_enabled = bool((hyperparams.get("vecnormalize") or {}).get("enable", False))
+    normalize = args.normalize if args.normalize is not None else vecnorm_enabled
 
     regime_name = regime["name"]
 
@@ -122,7 +124,7 @@ def build_experiment_config(
         project=args.project,
         group=group,
         run_name=args.run_name,
-        normalize=args.normalize,
+        normalize=normalize,
         vecnorm_path=args.vecnorm_path,
         wandb_log_freq=args.wandb_log_freq,
         tensorboard_root="runs",

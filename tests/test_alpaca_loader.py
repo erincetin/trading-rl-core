@@ -1,26 +1,34 @@
 # tests/test_alpaca_loader.py
 import pandas as pd
-from trading_rl.data.alpaca_loader import AlpacaDataLoader, AlpacaConfig
+import pytest
 from alpaca.data.timeframe import TimeFrameUnit
 
-class DummyClient:
-    def get_stock_bars(self, request):
-        raise AssertionError("Network call should not occur during cache-based tests")
+from trading_rl.data.alpaca_loader import (
+    AlpacaConfig,
+    AlpacaDataLoader,
+    _is_crypto_symbol,
+    _normalize_crypto_symbol,
+)
 
 def test_convert_timeframe():
-    cfg = AlpacaConfig(api_key="X", api_secret="Y")
-    loader = AlpacaDataLoader(cfg, client=DummyClient())
-
-    tf = loader._convert_timeframe("1Min")
+    tf = AlpacaDataLoader._convert_timeframe("1Min")
     assert tf.amount == 1
     assert tf.unit == TimeFrameUnit.Minute
+
+
+def test_convert_timeframe_invalid_raises():
+    with pytest.raises(ValueError):
+        AlpacaDataLoader._convert_timeframe("1Week")
 
 def test_cache_load(tmp_path):
     cfg = AlpacaConfig(
         api_key="X", api_secret="Y",
         cache_dir=str(tmp_path)
     )
-    loader = AlpacaDataLoader(cfg, client=DummyClient())
+    loader = AlpacaDataLoader(cfg)
+    loader._fetch_bars = lambda *args, **kwargs: (_ for _ in ()).throw(
+        AssertionError("Network fetch should not occur during cache-based tests")
+    )
 
     # Create fake cache file
     df = pd.DataFrame({
@@ -42,3 +50,12 @@ def test_cache_load(tmp_path):
     )
     assert loaded.shape[0] == 3
     assert "close" in loaded.columns
+
+
+def test_crypto_symbol_helpers():
+    assert _is_crypto_symbol("BTCUSD") is True
+    assert _is_crypto_symbol("BTC/USD") is True
+    assert _is_crypto_symbol("AAPL") is False
+
+    assert _normalize_crypto_symbol("BTCUSD") == "BTC/USD"
+    assert _normalize_crypto_symbol("btc/usd") == "BTC/USD"

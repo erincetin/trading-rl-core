@@ -1,6 +1,7 @@
 # tests/test_indicators.py
 import numpy as np
 import pandas as pd
+import pytest
 
 from trading_rl.data.indicators import add_talib_indicators
 
@@ -55,3 +56,9 @@ def test_add_talib_indicators_drops_nans():
 
     assert not out.isna().any().any()
     assert out.shape[0] < df.shape[0]  # early rows dropped for warmup
+
+
+def test_add_talib_indicators_missing_columns_raises():
+    df = pd.DataFrame({"close": [1.0, 2.0, 3.0]})
+    with pytest.raises(KeyError):
+        add_talib_indicators(df)

@@ -71,11 +71,10 @@ def train_once(
     env_name = exp.env_name
     seed = exp.seed
 
-    normalize = (
-        exp.normalize
-        if exp.normalize is not None
-        else bool(exp.vecnormalize_params.get("enable", False))
-    )
+    if exp.normalize is None:
+        normalize = bool(exp.vecnormalize_params.get("enable", False))
+    else:
+        normalize = bool(exp.normalize)
 
     # -------------------------
     # W&B
