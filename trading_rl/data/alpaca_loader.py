@@ -1,17 +1,16 @@
 # trading_rl/data/alpaca_loader.py
 
+import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
-from dotenv import load_dotenv
-import os
 
 import pandas as pd
-
-from alpaca.data.historical import StockHistoricalDataClient, CryptoHistoricalDataClient
-from alpaca.data.requests import StockBarsRequest, CryptoBarsRequest
+from alpaca.data.historical import CryptoHistoricalDataClient, StockHistoricalDataClient
+from alpaca.data.requests import CryptoBarsRequest, StockBarsRequest
 from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
+from dotenv import load_dotenv
 
 
 @dataclass

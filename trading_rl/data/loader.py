@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, List, Optional, Tuple
+from typing import Iterable, Optional
 
 import numpy as np
 import pandas as pd
@@ -14,9 +14,10 @@ class MarketData:
     """
     Container for prepared market data.
     """
-    df: pd.DataFrame          # full OHLCV+indicators dataframe, indexed by datetime
-    prices: np.ndarray        # shape (T,)
-    features: np.ndarray      # shape (T, F)
+
+    df: pd.DataFrame  # full OHLCV+indicators dataframe, indexed by datetime
+    prices: np.ndarray  # shape (T,)
+    features: np.ndarray  # shape (T, F)
 
 
 def load_ohlcv_csv(
@@ -38,11 +39,15 @@ def load_ohlcv_csv(
     df = pd.read_csv(path)
 
     if parse_dates not in df.columns:
-        raise ValueError(f"Expected datetime column '{parse_dates}' in CSV, got: {df.columns.tolist()}")
+        raise ValueError(
+            f"Expected datetime column '{parse_dates}' in CSV, got: {df.columns.tolist()}"
+        )
 
     df[parse_dates] = pd.to_datetime(df[parse_dates])
     if tz is not None:
-        df[parse_dates] = df[parse_dates].dt.tz_localize(tz, nonexistent="shift_forward", ambiguous="NaT")
+        df[parse_dates] = df[parse_dates].dt.tz_localize(
+            tz, nonexistent="shift_forward", ambiguous="NaT"
+        )
 
     df = df.sort_values(parse_dates).set_index(parse_dates)
     return df
@@ -61,7 +66,9 @@ def prepare_market_arrays(
     - feature_cols: None → use OHLCV + any extra columns except price_col
     """
     if price_col not in df.columns:
-        raise ValueError(f"price_col '{price_col}' not in df columns: {df.columns.tolist()}")
+        raise ValueError(
+            f"price_col '{price_col}' not in df columns: {df.columns.tolist()}"
+        )
 
     _df = df.copy()
 

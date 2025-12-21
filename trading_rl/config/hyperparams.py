@@ -1,22 +1,19 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Mapping
 
 import yaml
 
-
 DEFAULT_HYPERPARAMS_PATH = Path(__file__).with_name("sb3_finance_hyperparams.yaml")
 
 
-def load_hyperparams(path: str | Path | None = None) -> Dict[str, Any]:
-    hp_path = Path(path) if path is not None else DEFAULT_HYPERPARAMS_PATH
+def load_hyperparams(path: str) -> dict:
+    hp_path = Path(path)
+    if not hp_path.exists():
+        raise FileNotFoundError(f"Hyperparams file not found: {hp_path.resolve()}")
     with hp_path.open("r", encoding="utf-8") as f:
-        data = yaml.safe_load(f) or {}
-    if not isinstance(data, dict):
-        raise ValueError(f"Hyperparams file must be a mapping at top-level: {hp_path}")
-    return data
+        return yaml.safe_load(f) or {}
 
 
 def _resolve_activation_fn(name: Any):
@@ -93,5 +90,7 @@ def env_cfg(hp: dict, algo: str | None = None) -> dict:
     return _merge_dicts(base, override)
 
 
-def vecnormalize_cfg(hp: Mapping[str, Any]) -> Dict[str, Any]:
-    return dict(hp.get("vecnormalize", {}) or {})
+def vecnormalize_cfg(hp: dict) -> dict:
+    cfg = dict(hp.get("vecnormalize", {}) or {})
+    cfg.pop("enable", None)  # <-- CRITICAL
+    return cfg

@@ -9,15 +9,16 @@ algos/envs by name and stay extensible for custom additions.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Dict, Iterable, Tuple
+from typing import Callable, Dict, Tuple
 
 import numpy as np
 from stable_baselines3 import A2C, PPO, SAC, TD3
+from stable_baselines3.common.noise import NormalActionNoise
 from stable_baselines3.common.vec_env import (
     DummyVecEnv,
+    SubprocVecEnv,
     VecEnv,
     VecNormalize,
-    SubprocVecEnv,
 )
 
 from trading_rl.envs.trading_env import TradingEnv, TradingEnvConfig
@@ -26,7 +27,6 @@ from trading_rl.envs.windowed_wrapper import (
     WindowedTradingEnv,
 )
 
-from stable_baselines3.common.noise import NormalActionNoise
 # -----------------------------
 # Algo registry
 # -----------------------------
@@ -41,22 +41,22 @@ class AlgoBuilder:
     factory: Callable[[VecEnv, dict], object]
 
 
-def _ppo_factory(env: VecEnv, params: dict):
+def _ppo_factory(env: VecEnv, params: dict) -> PPO:
     policy = params.pop("policy", "MlpPolicy")
     return PPO(policy, env, **params)
 
 
-def _a2c_factory(env: VecEnv, params: dict):
+def _a2c_factory(env: VecEnv, params: dict) -> A2C:
     policy = params.pop("policy", "MlpPolicy")
     return A2C(policy, env, **params)
 
 
-def _sac_factory(env: VecEnv, params: dict):
+def _sac_factory(env: VecEnv, params: dict) -> SAC:
     policy = params.pop("policy", "MlpPolicy")
     return SAC(policy, env, **params)
 
 
-def _td3_factory(env: VecEnv, params: dict):
+def _td3_factory(env: VecEnv, params: dict) -> TD3:
     policy = params.pop("policy", "MlpPolicy")
 
     exploration_sigma = float(params.pop("exploration_noise", 0.1))

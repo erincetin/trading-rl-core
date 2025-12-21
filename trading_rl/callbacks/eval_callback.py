@@ -1,6 +1,7 @@
 import numpy as np
-import wandb
 from stable_baselines3.common.callbacks import BaseCallback
+
+import wandb
 from trading_rl.baselines.baselines import compute_buy_and_hold, compute_sma_crossover
 
 
@@ -61,15 +62,16 @@ class WandbEvalCallback(BaseCallback):
                 a = np.asarray(actions, dtype=np.float32)
                 # flatten all envs + action dims
                 flat = a.reshape(-1)
-                wandb.log(
-                    {
-                        "train/action_mean": float(flat.mean()),
-                        "train/action_std": float(flat.std()),
-                        "train/action_min": float(flat.min()),
-                        "train/action_max": float(flat.max()),
-                        "train/action_hist": wandb.Histogram(flat),
-                    }
-                )
+                if flat.size > 0:
+                    wandb.log(
+                        {
+                            "train/action_mean": float(flat.mean()),
+                            "train/action_std": float(flat.std()),
+                            "train/action_min": float(flat.min()),
+                            "train/action_max": float(flat.max()),
+                            "train/action_hist": wandb.Histogram(flat),
+                        }
+                    )
 
         if self.eval_freq > 0 and self.num_timesteps % self.eval_freq == 0:
             self._run_eval()
@@ -185,6 +187,38 @@ class WandbEvalCallback(BaseCallback):
                         }
                     )
                 step_idx += 1
+
+                # ---- finalize episode metrics ----
+            pv_arr = np.asarray(pv_curve, dtype=np.float64)
+            ret = float(pv_arr[-1] / max(pv_arr[0], 1e-12) - 1.0)
+
+            step_rets = pv_arr[1:] / np.maximum(pv_arr[:-1], 1e-12) - 1.0
+            sharpe = _sharpe(step_rets)
+            mdd = _max_drawdown(pv_arr)
+
+            turnover = float(abs_trade_value / max(pv_arr[0], 1e-12))
+
+            ep_returns.append(ret)
+            ep_sharpes.append(sharpe)
+            ep_mdds.append(mdd)
+            ep_abs_trade_values.append(float(abs_trade_value))
+
+            ep_turnovers.append(turnover)
+            ep_trades_counts.append(int(trades_count))
+
+            # optional: log curve
+            wandb.log(
+                {
+                    f"eval/portfolio_curve_ep{ep}": wandb.plot.line_series(
+                        xs=list(range(len(pv_curve))),
+                        ys=[pv_curve],
+                        keys=[f"episode_{ep}"],
+                        title="Evaluation Portfolio Value",
+                        xname="step",
+                    )
+                }
+            )
+
         # Summary statistics
         ret_pct = [r * 100 for r in ep_returns]
         mdd_pct = [d * 100 for d in ep_mdds]

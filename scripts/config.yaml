@@ -1,0 +1,134 @@
+experiments:
+  ppo:
+    algo:
+      policy: MlpPolicy
+      policy_kwargs:
+        net_arch: [256, 256]
+        activation_fn: ReLU
+      device: auto
+      verbose: 1
+
+      learning_rate: 3.0e-4
+      n_steps: 512
+      batch_size: 256
+      n_epochs: 3
+      gamma: 0.998
+      gae_lambda: 0.95
+      clip_range: 0.2
+      ent_coef: 0.001
+      vf_coef: 0.5
+      max_grad_norm: 0.5
+
+    env:
+      n_envs_train: 8
+
+  a2c:
+    algo:
+      policy: MlpPolicy
+      policy_kwargs:
+        net_arch: [256, 256]
+        activation_fn: ReLU
+      device: auto
+      verbose: 1
+
+      learning_rate: 3.0e-4
+      n_steps: 128
+      gamma: 0.99
+      gae_lambda: 0.95
+      ent_coef: 0.0
+      vf_coef: 0.5
+      max_grad_norm: 0.5
+
+    env:
+      n_envs_train: 8
+
+  sac:
+    algo:
+      policy: MlpPolicy
+      policy_kwargs:
+        net_arch: [256, 256]
+        activation_fn: ReLU
+      device: auto
+      verbose: 1
+
+      learning_rate: 3.0e-4
+      buffer_size: 1000000
+      batch_size: 256
+      gamma: 0.99
+      tau: 0.005
+      ent_coef: auto
+      train_freq: 1
+      gradient_steps: 1
+      learning_starts: 10000
+
+    env:
+      n_envs_train: 1
+
+  td3:
+    algo:
+      policy: MlpPolicy
+      policy_kwargs:
+        net_arch: [256, 256]
+        activation_fn: ReLU
+      device: auto
+      verbose: 1
+
+      learning_rate: 3.0e-4
+      buffer_size: 1000000
+      batch_size: 256
+      gamma: 0.99
+      tau: 0.005
+      train_freq: 1
+      gradient_steps: 1
+      learning_starts: 10000
+      policy_delay: 2
+      target_policy_noise: 0.1
+      target_noise_clip: 0.3
+      exploration_noise: 0.1
+
+    env:
+      n_envs_train: 1
+
+vecnormalize:
+  enable: true
+  norm_obs: true
+  norm_reward: false
+  clip_obs: 10.0
+
+env:
+  trading_cost_pct: 0.001
+  reward_mode: diff_return
+  reward_scaling: 100.0
+  window_size: 512
+  random_start: true
+  n_envs_train: 1
+  n_envs_eval: 1
+  vec_env_type: dummy  # dummy | subproc
+
+regimes:
+  - name: btc_2023_sideways_trainH1_evalQ4
+    symbol: BTCUSD
+    timeframe: 15Min
+    warmup_days: 30
+    start: "2023-01-01"
+    end: "2023-12-31"
+    eval_start: "2023-10-01"
+    eval_end: "2023-12-31"
+
+  - name: aapl_2024_bull_trainH1_evalQ4
+    symbol: AAPL
+    timeframe: 15Min
+    warmup_days: 30
+    start: "2024-01-01"
+    end: "2024-12-31"
+    eval_start: "2024-10-01"
+    eval_end: "2024-12-31"
+
+  - name: aapl_2022_bear_trainH1_evalQ4
+    symbol: AAPL
+    timeframe: 15Min
+    warmup_days: 30
+    start: "2022-01-01"
+    end: "2022-12-31"
+    eval_start: "2022-10-01"
+    eval_end: "2022-12-31"

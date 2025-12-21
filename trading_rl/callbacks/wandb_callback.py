@@ -1,6 +1,7 @@
 import numpy as np
-import wandb
 from stable_baselines3.common.callbacks import BaseCallback
+
+import wandb
 
 
 class WandbCallback(BaseCallback):
