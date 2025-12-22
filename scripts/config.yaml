@@ -129,6 +129,7 @@ env:
   n_envs_eval: 1
   vec_env_type: dummy  # dummy | subproc
   obs_include_pnl: true
+  obs_lookback: 3
   verbose: 1
 
 regimes:

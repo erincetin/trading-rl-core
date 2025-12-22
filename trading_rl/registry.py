@@ -130,6 +130,7 @@ def _make_windowed_env(
         obs_include_position=bool(cfg.get("obs_include_position", True)),
         obs_include_time=bool(cfg.get("obs_include_time", True)),
         obs_include_pnl=bool(cfg.get("obs_include_pnl", True)),
+        obs_lookback=int(cfg.get("obs_lookback", 1)),
     )
 
     if not isinstance(env_cfg, TradingEnvConfig):
@@ -177,6 +178,7 @@ def _make_vanilla_env(
         obs_include_position=bool(cfg.get("obs_include_position", True)),
         obs_include_time=bool(cfg.get("obs_include_time", True)),
         obs_include_pnl=bool(cfg.get("obs_include_pnl", True)),
+        obs_lookback=int(cfg.get("obs_lookback", 1)),
     )
 
     def build_train():

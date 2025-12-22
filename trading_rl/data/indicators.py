@@ -52,7 +52,17 @@ def add_talib_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df["ROC_10"] = talib.ROC(close, timeperiod=10)
 
     # ------------------------
-    # Volatility indicators
+    # Volatility + drawdown
+    # ------------------------
+    close_s = pd.Series(close, index=df.index)
+    log_ret = np.log(close_s / close_s.shift(1))
+    df["VOL_20"] = log_ret.rolling(20).std()
+    df["VOL_60"] = log_ret.rolling(60).std()
+    roll_max_60 = close_s.rolling(60).max()
+    df["DD_60"] = close_s / roll_max_60 - 1.0
+
+    # ------------------------
+    # Volatility indicators (TA-Lib)
     # ------------------------
     df["ATR_14"] = talib.ATR(high, low, close, timeperiod=14)
 

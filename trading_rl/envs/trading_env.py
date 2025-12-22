@@ -19,6 +19,7 @@ class TradingEnvConfig:
     obs_include_position: bool = True
     obs_include_time: bool = True
     obs_include_pnl: bool = True
+    obs_lookback: int = 1
     reward_mode: str = "log_return"
 
 
@@ -59,6 +60,8 @@ class TradingEnv(gym.Env):
         self.features = features.astype("float32")
         self.T, self.F = self.features.shape
         self.config = config or TradingEnvConfig()
+        if int(self.config.obs_lookback) < 1:
+            raise ValueError("obs_lookback must be >= 1")
 
         # Action: target allocation to asset in [0, max_position] (long-only)
         self.action_space = spaces.Box(
@@ -68,7 +71,7 @@ class TradingEnv(gym.Env):
         )
 
         # Observation: features + (optional) [cash_frac, position_frac, time_frac]
-        obs_dim = self.F
+        obs_dim = self.F * int(self.config.obs_lookback)
         if self.config.obs_include_cash:
             obs_dim += 1
         if self.config.obs_include_position:
@@ -259,15 +262,25 @@ class TradingEnv(gym.Env):
     # ---- Helpers ----
 
     def _get_obs(self) -> np.ndarray:
-        feats = self.features[self._t]  # shape (F,)
+        lookback = int(self.config.obs_lookback)
+        start = max(0, self._t - lookback + 1)
+        window = self.features[start : self._t + 1]
+        if window.shape[0] < lookback:
+            if window.shape[0] == 0:
+                window = np.zeros((lookback, self.F), dtype=np.float32)
+            else:
+                pad = np.repeat(window[:1], lookback - window.shape[0], axis=0)
+                window = np.concatenate([pad, window], axis=0)
+
+        feats = window.reshape(-1)
         obs_list = [feats]
 
         if self.config.obs_include_cash:
             cash_frac = self._cash / max(self._portfolio_value, 1e-8)
             obs_list.append(np.array([cash_frac], dtype=np.float32))
 
+        price_t = float(self.prices[self._t])
         if self.config.obs_include_position:
-            price_t = float(self.prices[self._t])
             asset_value = self._position * price_t
             pos_frac = asset_value / max(self._portfolio_value, 1e-8)
             obs_list.append(np.array([pos_frac], dtype=np.float32))
@@ -277,7 +290,6 @@ class TradingEnv(gym.Env):
             obs_list.append(np.array([time_frac], dtype=np.float32))
 
         if self.config.obs_include_pnl:
-            price_t = float(self.prices[self._t])
             unrealized = (price_t - self._avg_entry_price) * self._position
             pnl_frac = unrealized / max(self._portfolio_value, 1e-8)
             obs_list.append(np.array([pnl_frac], dtype=np.float32))

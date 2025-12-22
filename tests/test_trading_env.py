@@ -177,6 +177,29 @@ def test_env_observation_metadata_values():
     assert abs(obs[-1] - 0.0) < 1e-6  # pnl_frac
 
 
+def test_env_observation_lookback_flattens_order():
+    prices = np.array([1.0, 1.0, 1.0], dtype=np.float32)
+    feats = np.array([[1.0, 10.0], [2.0, 20.0], [3.0, 30.0]], dtype=np.float32)
+    cfg = TradingEnvConfig(
+        obs_lookback=3,
+        obs_include_cash=False,
+        obs_include_position=False,
+        obs_include_time=False,
+        obs_include_pnl=False,
+        reward_mode="diff_return",
+    )
+    env = TradingEnv(prices, feats, cfg)
+
+    obs, _ = env.reset()
+    assert np.allclose(obs, [1.0, 10.0, 1.0, 10.0, 1.0, 10.0])
+
+    obs, *_ = env.step([0.0])
+    assert np.allclose(obs, [1.0, 10.0, 1.0, 10.0, 2.0, 20.0])
+
+    obs, *_ = env.step([0.0])
+    assert np.allclose(obs, [1.0, 10.0, 2.0, 20.0, 3.0, 30.0])
+
+
 def test_env_action_clips_negative_to_zero():
     prices = np.array([10.0, 10.0], dtype=np.float32)
     feats = np.zeros((2, 1), dtype=np.float32)
