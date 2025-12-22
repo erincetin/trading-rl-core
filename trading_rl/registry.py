@@ -122,13 +122,14 @@ def _make_windowed_env(
     )
     env_cfg = cfg.get("env_cfg") or TradingEnvConfig(
         trading_cost_pct=float(cfg.get("trading_cost_pct", 0.001)),
-        reward_mode=str(cfg.get("reward_mode", "diff_return")),
+        reward_mode=str(cfg.get("reward_mode", "log_return")),
         reward_scaling=float(cfg.get("reward_scaling", 1.0)),
         initial_cash=float(cfg.get("initial_cash", 1_000_000.0)),
         max_position=float(cfg.get("max_position", 1.0)),
         obs_include_cash=bool(cfg.get("obs_include_cash", True)),
         obs_include_position=bool(cfg.get("obs_include_position", True)),
         obs_include_time=bool(cfg.get("obs_include_time", True)),
+        obs_include_pnl=bool(cfg.get("obs_include_pnl", True)),
     )
 
     if not isinstance(env_cfg, TradingEnvConfig):
@@ -168,13 +169,14 @@ def _make_vanilla_env(
 ):
     env_cfg = cfg.get("env_cfg") or TradingEnvConfig(
         trading_cost_pct=float(cfg.get("trading_cost_pct", 0.001)),
-        reward_mode=str(cfg.get("reward_mode", "diff_return")),
+        reward_mode=str(cfg.get("reward_mode", "log_return")),
         reward_scaling=float(cfg.get("reward_scaling", 1.0)),
         initial_cash=float(cfg.get("initial_cash", 1_000_000.0)),
         max_position=float(cfg.get("max_position", 1.0)),
         obs_include_cash=bool(cfg.get("obs_include_cash", True)),
         obs_include_position=bool(cfg.get("obs_include_position", True)),
         obs_include_time=bool(cfg.get("obs_include_time", True)),
+        obs_include_pnl=bool(cfg.get("obs_include_pnl", True)),
     )
 
     def build_train():

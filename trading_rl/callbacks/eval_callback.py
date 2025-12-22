@@ -106,7 +106,7 @@ class WandbEvalCallback(BaseCallback):
             trade_cost = float(getattr(cfg, "trading_cost_pct", trade_cost))
 
         # Precompute baselines once
-        bh_curve = compute_buy_and_hold(prices)
+        bh_curve = compute_buy_and_hold(prices, cost=trade_cost, include_exit_cost=True)
         sma_curve = compute_sma_crossover(prices, cost=trade_cost)
 
         wandb.log(

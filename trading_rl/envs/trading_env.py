@@ -18,7 +18,8 @@ class TradingEnvConfig:
     obs_include_cash: bool = True
     obs_include_position: bool = True
     obs_include_time: bool = True
-    reward_mode: str = "diff_return"
+    obs_include_pnl: bool = True
+    reward_mode: str = "log_return"
 
 
 class TradingEnv(gym.Env):
@@ -74,6 +75,8 @@ class TradingEnv(gym.Env):
             obs_dim += 1
         if self.config.obs_include_time:
             obs_dim += 1
+        if self.config.obs_include_pnl:
+            obs_dim += 1
 
         # Reasonable bounds; features can be roughly standardized by user
         high = np.ones(obs_dim, dtype=np.float32) * 1e6
@@ -85,6 +88,7 @@ class TradingEnv(gym.Env):
         self._t: int = 0
         self._cash: float = self.config.initial_cash
         self._position: float = 0.0  # number of shares
+        self._avg_entry_price: float = 0.0
         self._portfolio_value: float = self.config.initial_cash
 
         # History for analysis
@@ -110,6 +114,7 @@ class TradingEnv(gym.Env):
         self._t = 0
         self._cash = self.config.initial_cash
         self._position = 0.0
+        self._avg_entry_price = 0.0
         self._portfolio_value = self.config.initial_cash
 
         # Clear history
@@ -153,17 +158,31 @@ class TradingEnv(gym.Env):
         executed_trade_value = 0.0
         if abs(trade_value) > 1e-8:
             if trade_value > 0:
+                old_pos = self._position
                 max_buy_value = min(trade_value, max(0.0, self._cash))
                 trade_cost = abs(max_buy_value) * self.config.trading_cost_pct
                 max_buy_value = min(max_buy_value, max(0.0, self._cash - trade_cost))
                 executed_trade_value = max_buy_value
-                self._position += max_buy_value / price_t
+                delta_shares = max_buy_value / price_t
+                self._position += delta_shares
+                if self._position > 0.0:
+                    if old_pos > 0.0 and self._avg_entry_price > 0.0:
+                        self._avg_entry_price = (
+                            self._avg_entry_price * old_pos + price_t * delta_shares
+                        ) / self._position
+                    else:
+                        self._avg_entry_price = price_t
                 self._cash -= max_buy_value + trade_cost
             else:
+                old_pos = self._position
                 max_sell_value = min(-trade_value, current_asset_value)
                 trade_cost = abs(max_sell_value) * self.config.trading_cost_pct
                 executed_trade_value = -max_sell_value
-                self._position -= max_sell_value / price_t
+                delta_shares = max_sell_value / price_t
+                self._position -= delta_shares
+                if self._position <= 0.0:
+                    self._position = 0.0
+                    self._avg_entry_price = 0.0
                 self._cash += max_sell_value - trade_cost
         else:
             trade_cost = 0.0
@@ -199,6 +218,10 @@ class TradingEnv(gym.Env):
             if pv0 <= 0 or pv1 <= 0:
                 raise ValueError("portfolio_value must be > 0 for log_return")
             reward = float(np.log(pv1 / pv0))
+        elif mode in {"excess_return", "excess"}:
+            agent_ret = (pv1 - pv0) / pv0
+            price_ret = (price_next / price_t) - 1.0
+            reward = agent_ret - price_ret
         elif mode in {"pnl", "delta_pv"}:
             reward = pv1 - pv0
         else:
@@ -252,6 +275,12 @@ class TradingEnv(gym.Env):
         if self.config.obs_include_time:
             time_frac = self._t / max(self.T - 1, 1)
             obs_list.append(np.array([time_frac], dtype=np.float32))
+
+        if self.config.obs_include_pnl:
+            price_t = float(self.prices[self._t])
+            unrealized = (price_t - self._avg_entry_price) * self._position
+            pnl_frac = unrealized / max(self._portfolio_value, 1e-8)
+            obs_list.append(np.array([pnl_frac], dtype=np.float32))
 
         return np.concatenate(obs_list).astype(np.float32)
 

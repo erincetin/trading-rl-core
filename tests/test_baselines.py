@@ -24,3 +24,10 @@ def test_baselines_reject_non_positive_prices():
         compute_buy_and_hold(prices)
     with pytest.raises(ValueError):
         compute_sma_crossover(prices)
+
+
+def test_buy_and_hold_applies_costs():
+    prices = np.array([10.0, 20.0], dtype=float)
+    curve = compute_buy_and_hold(prices, cost=0.1, include_exit_cost=True)
+    assert abs(curve[0] - 0.9) < 1e-6
+    assert abs(curve[-1] - 1.62) < 1e-6

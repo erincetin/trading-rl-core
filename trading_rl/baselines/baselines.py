@@ -13,9 +13,16 @@ def _validate_prices(prices) -> np.ndarray:
     return arr
 
 
-def compute_buy_and_hold(prices):
+def compute_buy_and_hold(prices, cost: float = 0.0, include_exit_cost: bool = True):
     prices = _validate_prices(prices)
+    cost = float(cost)
+    if cost < 0:
+        raise ValueError("cost must be >= 0")
     pv = prices / prices[0]
+    pv = pv * (1.0 - cost)  # enter once
+    if include_exit_cost and pv.size > 0:
+        pv = pv.copy()
+        pv[-1] = pv[-1] * (1.0 - cost)
     return pv.tolist()
 
 

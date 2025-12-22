@@ -7,7 +7,11 @@ from trading_rl.envs.trading_env import TradingEnv, TradingEnvConfig
 def make_simple_env():
     prices = np.array([1.0, 1.1, 1.2], dtype=np.float32)
     features = np.zeros((3, 2), dtype=np.float32)
-    env = TradingEnv(prices, features, TradingEnvConfig(trading_cost_pct=0.0))
+    env = TradingEnv(
+        prices,
+        features,
+        TradingEnvConfig(trading_cost_pct=0.0, reward_mode="diff_return"),
+    )
     return env
 
 def test_env_reset():
@@ -30,7 +34,7 @@ def test_env_reward_logic_long_position():
     
     env = TradingEnv(
         prices, feats,
-        TradingEnvConfig(trading_cost_pct=0.0)
+        TradingEnvConfig(trading_cost_pct=0.0, reward_mode="diff_return")
     )
     env.reset()
 
@@ -78,6 +82,13 @@ def test_env_reward_modes_log_and_pnl():
     _, reward_pnl, *_ = env_pnl.step([1.0])
     assert abs(reward_pnl - 100_000.0) < 1e-6
 
+    env_excess = TradingEnv(
+        prices, feats, TradingEnvConfig(trading_cost_pct=0.0, reward_mode="excess")
+    )
+    env_excess.reset()
+    _, reward_excess, *_ = env_excess.step([1.0])
+    assert abs(reward_excess) < 1e-6
+
 
 def test_env_trade_cost_limits_full_investment():
     prices = np.array([10.0, 10.0], dtype=np.float32)
@@ -109,7 +120,10 @@ def test_env_observation_shape_without_metadata():
     prices = np.array([1.0, 1.0], dtype=np.float32)
     feats = np.zeros((2, 4), dtype=np.float32)
     cfg = TradingEnvConfig(
-        obs_include_cash=False, obs_include_position=False, obs_include_time=False
+        obs_include_cash=False,
+        obs_include_position=False,
+        obs_include_time=False,
+        obs_include_pnl=False,
     )
     env = TradingEnv(prices, feats, cfg)
     obs, _ = env.reset()
@@ -134,7 +148,9 @@ def test_env_cash_and_position_after_trade():
 def test_env_reward_scaling_applies():
     prices = np.array([1.0, 2.0], dtype=np.float32)
     feats = np.zeros((2, 1), dtype=np.float32)
-    cfg = TradingEnvConfig(trading_cost_pct=0.0, reward_scaling=10.0)
+    cfg = TradingEnvConfig(
+        trading_cost_pct=0.0, reward_scaling=10.0, reward_mode="diff_return"
+    )
     env = TradingEnv(prices, feats, cfg)
     env.reset()
 
@@ -146,15 +162,19 @@ def test_env_observation_metadata_values():
     prices = np.array([1.0, 1.0], dtype=np.float32)
     feats = np.array([[2.0, 3.0], [4.0, 5.0]], dtype=np.float32)
     cfg = TradingEnvConfig(
-        obs_include_cash=True, obs_include_position=True, obs_include_time=True
+        obs_include_cash=True,
+        obs_include_position=True,
+        obs_include_time=True,
+        obs_include_pnl=True,
     )
     env = TradingEnv(prices, feats, cfg)
     obs, _ = env.reset()
 
     assert np.allclose(obs[:2], [2.0, 3.0])
-    assert abs(obs[-3] - 1.0) < 1e-6  # cash_frac
-    assert abs(obs[-2] - 0.0) < 1e-6  # pos_frac
-    assert abs(obs[-1] - 0.0) < 1e-6  # time_frac
+    assert abs(obs[-4] - 1.0) < 1e-6  # cash_frac
+    assert abs(obs[-3] - 0.0) < 1e-6  # pos_frac
+    assert abs(obs[-2] - 0.0) < 1e-6  # time_frac
+    assert abs(obs[-1] - 0.0) < 1e-6  # pnl_frac
 
 
 def test_env_action_clips_negative_to_zero():
