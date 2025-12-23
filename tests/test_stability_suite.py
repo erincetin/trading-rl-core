@@ -162,3 +162,28 @@ def test_sb3_smoke_train_short_rollout():
 
     model = sb3.PPO("MlpPolicy", env, verbose=0, n_steps=8, batch_size=4, device="cpu")
     model.learn(total_timesteps=16)
+
+
+def test_full_rollout_determinism_with_seed():
+    prices = _make_prices(12, start=2.0, step=0.01)
+    feats = _make_features(12, 2)
+    cfg = TradingEnvConfig(trading_cost_pct=0.0, reward_mode="diff_return")
+
+    def rollout(seed: int):
+        env = TradingEnv(prices, feats, cfg)
+        obs, _ = env.reset(seed=seed)
+        rewards = []
+        pvs = []
+        for _ in range(5):
+            action = np.array([0.5], dtype=np.float32)
+            obs, reward, terminated, truncated, info = env.step(action)
+            rewards.append(float(reward))
+            pvs.append(float(info["portfolio_value"]))
+            if terminated or truncated:
+                break
+        return rewards, pvs
+
+    rewards1, pvs1 = rollout(123)
+    rewards2, pvs2 = rollout(123)
+    assert rewards1 == rewards2
+    assert pvs1 == pvs2
