@@ -63,6 +63,7 @@ uv run python scripts/runner.py --regime aapl_2024_bull_trainH1_evalQ4
 Key flags:
 - `--algos`: comma list (`ppo,a2c,sac,td3`)
 - `--project`: W&B project name
+- `--parallel`: max experiments to run concurrently
 - `--hyperparams`: path to YAML hyperparams/regimes (default: `scripts/config.yaml`)
 - `--regimes`: optional YAML/JSON regimes list (overrides hyperparams regimes)
 - `--regime`: run only a single regime by name

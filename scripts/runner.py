@@ -12,7 +12,9 @@ Behavior:
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Iterable, List, Sequence
 
 from trading_rl.config.hyperparams import load_hyperparams
@@ -103,6 +105,81 @@ def _apply_run_cfg(args, run_cfg: dict, *, per_algo: bool) -> None:
             setattr(args, key, run_cfg[key])
         elif getattr(args, key) is None:
             setattr(args, key, run_cfg[key])
+
+
+def _run_combo(args, combo: dict) -> None:
+    # apply regime -> returns args-like object with overrides + regime_name
+    rargs = apply_regime(args, combo["regime"])
+    run_cfg = _resolve_run_cfg(args.hyperparams_data or {}, combo["algo"])
+    _apply_run_cfg(rargs, run_cfg, per_algo=True)
+
+    # data
+    df_raw = load_market_data(
+        symbol=rargs.symbol,
+        start=rargs.start,
+        end=rargs.end,
+        timeframe=rargs.timeframe,
+        warmup_days=rargs.warmup_days,
+        csv_path=rargs.csv_path,
+        alpaca_cfg=AlpacaConfig(
+            api_key=rargs.api_key,
+            api_secret=rargs.api_secret,
+            cache_dir=rargs.cache_dir,
+        ),
+    )
+    df_feat = add_talib_indicators(df_raw)
+
+    start_ts = ts_like_index(df_feat, rargs.start)
+    end_ts = ts_like_index(df_feat, rargs.end)
+    df_feat = df_feat.loc[start_ts:end_ts]
+
+    train_df, eval_df = split_train_eval(
+        df_feat,
+        eval_start=rargs.eval_start,
+        eval_end=rargs.eval_end,
+    )
+
+    # minimum length sanity checks
+    env_hp = (rargs.hyperparams_data or {}).get("env", {}) or {}
+    window_size = int(env_hp.get("window_size", 512))
+    if combo["env"] == "windowed":
+        min_train_len = window_size + 1
+        min_eval_len = 2
+    else:
+        min_train_len = 2
+        min_eval_len = 2
+
+    if len(train_df) < min_train_len or len(eval_df) < min_eval_len:
+        raise ValueError(
+            f"[{getattr(rargs, 'regime_name', 'default')}] too short: "
+            f"train={len(train_df)} (need>={min_train_len}), "
+            f"eval={len(eval_df)} (need>={min_eval_len})"
+        )
+
+    md_train = prepare_market_arrays(train_df)
+    md_eval = prepare_market_arrays(eval_df)
+
+    exp = build_experiment_config(
+        args=rargs,
+        hyperparams=rargs.hyperparams_data,
+        regime=combo["regime"],
+        algo=combo["algo"],
+        env_name=combo["env"],
+        seed=combo["seed"],
+    )
+
+    train_once(
+        exp=exp,
+        md_train=md_train,
+        md_eval=md_eval,
+        df_train=train_df,
+        df_eval=eval_df,
+    )
+
+
+def _run_combo_worker(args_dict: dict, combo: dict) -> None:
+    args = SimpleNamespace(**args_dict)
+    _run_combo(args, combo)
 
 
 def expand_matrix(
@@ -230,6 +307,12 @@ def parse_args():
     parser.add_argument(
         "--csv-path", type=str, default=None, help="Local CSV with OHLCV data."
     )
+    parser.add_argument(
+        "--parallel",
+        type=int,
+        default=1,
+        help="Max number of experiments to run in parallel.",
+    )
 
     # Single-regime fields (used only if no regimes are supplied)
     parser.add_argument("--symbol", type=str, default="AAPL")
@@ -347,74 +430,15 @@ def main():
 
     combos = expand_matrix(regimes, args.algos, args.envs, args.seeds)
 
-    for combo in combos:
-        # apply regime -> returns args-like object with overrides + regime_name
-        rargs = apply_regime(args, combo["regime"])
-        run_cfg = _resolve_run_cfg(args.hyperparams_data or {}, combo["algo"])
-        _apply_run_cfg(rargs, run_cfg, per_algo=True)
-
-        # data
-        df_raw = load_market_data(
-            symbol=rargs.symbol,
-            start=rargs.start,
-            end=rargs.end,
-            timeframe=rargs.timeframe,
-            warmup_days=rargs.warmup_days,
-            csv_path=rargs.csv_path,
-            alpaca_cfg=AlpacaConfig(
-                api_key=rargs.api_key,
-                api_secret=rargs.api_secret,
-                cache_dir=rargs.cache_dir,
-            ),
-        )
-        df_feat = add_talib_indicators(df_raw)
-
-        start_ts = ts_like_index(df_feat, rargs.start)
-        end_ts = ts_like_index(df_feat, rargs.end)
-        df_feat = df_feat.loc[start_ts:end_ts]
-
-        train_df, eval_df = split_train_eval(
-            df_feat,
-            eval_start=rargs.eval_start,
-            eval_end=rargs.eval_end,
-        )
-
-        # minimum length sanity checks
-        env_hp = (rargs.hyperparams_data or {}).get("env", {}) or {}
-        window_size = int(env_hp.get("window_size", 512))
-        if combo["env"] == "windowed":
-            min_train_len = window_size + 1
-            min_eval_len = 2
-        else:
-            min_train_len = 2
-            min_eval_len = 2
-
-        if len(train_df) < min_train_len or len(eval_df) < min_eval_len:
-            raise ValueError(
-                f"[{getattr(rargs, 'regime_name', 'default')}] too short: "
-                f"train={len(train_df)} (need>={min_train_len}), "
-                f"eval={len(eval_df)} (need>={min_eval_len})"
-            )
-
-        md_train = prepare_market_arrays(train_df)
-        md_eval = prepare_market_arrays(eval_df)
-
-        exp = build_experiment_config(
-            args=rargs,
-            hyperparams=rargs.hyperparams_data,
-            regime=combo["regime"],
-            algo=combo["algo"],
-            env_name=combo["env"],
-            seed=combo["seed"],
-        )
-
-        train_once(
-            exp=exp,
-            md_train=md_train,
-            md_eval=md_eval,
-            df_train=train_df,
-            df_eval=eval_df,
-        )
+    if args.parallel and args.parallel > 1:
+        args_dict = vars(args)
+        with ProcessPoolExecutor(max_workers=int(args.parallel)) as executor:
+            futures = [executor.submit(_run_combo_worker, args_dict, c) for c in combos]
+            for fut in as_completed(futures):
+                fut.result()
+    else:
+        for combo in combos:
+            _run_combo(args, combo)
 
 
 if __name__ == "__main__":
