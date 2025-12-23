@@ -12,6 +12,7 @@ Behavior:
 from __future__ import annotations
 
 import argparse
+import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from types import SimpleNamespace
@@ -313,6 +314,12 @@ def parse_args():
         default=1,
         help="Max number of experiments to run in parallel.",
     )
+    parser.add_argument(
+        "--parallel-delay",
+        type=float,
+        default=2.0,
+        help="Delay (seconds) between launching parallel experiments.",
+    )
 
     # Single-regime fields (used only if no regimes are supplied)
     parser.add_argument("--symbol", type=str, default="AAPL")
@@ -433,7 +440,11 @@ def main():
     if args.parallel and args.parallel > 1:
         args_dict = vars(args)
         with ProcessPoolExecutor(max_workers=int(args.parallel)) as executor:
-            futures = [executor.submit(_run_combo_worker, args_dict, c) for c in combos]
+            futures = []
+            for idx, combo in enumerate(combos):
+                if idx > 0 and args.parallel_delay:
+                    time.sleep(float(args.parallel_delay))
+                futures.append(executor.submit(_run_combo_worker, args_dict, combo))
             for fut in as_completed(futures):
                 fut.result()
     else:
