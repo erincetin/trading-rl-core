@@ -77,6 +77,13 @@ def _apply_run_cfg(args, run_cfg: dict, *, per_algo: bool) -> None:
             "resume",
             "checkpoint",
             "wandb_log_freq",
+            "wandb_log_eval_curves",
+            "wandb_log_baseline_curves",
+            "wandb_log_action_hist",
+            "wandb_log_debug",
+            "wandb_curve_max_points",
+            "wandb_action_hist_freq",
+            "wandb_hist_max_points",
             "sb3_log_interval",
             "output_dir",
         ]
@@ -93,6 +100,13 @@ def _apply_run_cfg(args, run_cfg: dict, *, per_algo: bool) -> None:
             "resume",
             "checkpoint",
             "wandb_log_freq",
+            "wandb_log_eval_curves",
+            "wandb_log_baseline_curves",
+            "wandb_log_action_hist",
+            "wandb_log_debug",
+            "wandb_curve_max_points",
+            "wandb_action_hist_freq",
+            "wandb_hist_max_points",
             "sb3_log_interval",
             "output_dir",
             "cache_dir",
@@ -372,6 +386,18 @@ def parse_args():
     args.hyperparams_data = (
         load_hyperparams(args.hyperparams) if args.hyperparams else {}
     )
+
+    for key in (
+        "wandb_log_eval_curves",
+        "wandb_log_baseline_curves",
+        "wandb_log_action_hist",
+        "wandb_log_debug",
+        "wandb_curve_max_points",
+        "wandb_action_hist_freq",
+        "wandb_hist_max_points",
+    ):
+        if not hasattr(args, key):
+            setattr(args, key, None)
 
     args.algos = parse_list(args.algos)
     _apply_run_cfg(args, args.hyperparams_data.get("run", {}) or {}, per_algo=False)

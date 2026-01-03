@@ -132,6 +132,13 @@ def train_once(
                 eval_env,
                 eval_freq=exp.eval_freq,
                 n_eval_episodes=exp.eval_episodes,
+                log_eval_curves=exp.wandb_log_eval_curves,
+                log_baseline_curves=exp.wandb_log_baseline_curves,
+                log_action_hist=exp.wandb_log_action_hist,
+                log_debug=exp.wandb_log_debug,
+                wandb_curve_max_points=exp.wandb_curve_max_points,
+                wandb_action_hist_freq=exp.wandb_action_hist_freq,
+                wandb_hist_max_points=exp.wandb_hist_max_points,
             ),
         ]
     )

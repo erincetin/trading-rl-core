@@ -32,6 +32,30 @@ def _percentiles(x, ps=(10, 25, 50, 75, 90)):
     return {f"p{p}": float(v) for p, v in zip(ps, vals)}
 
 
+def _downsample_indices(size: int, max_points: int) -> np.ndarray:
+    if size <= 0:
+        return np.asarray([], dtype=int)
+    if max_points <= 0 or size <= max_points:
+        return np.arange(size, dtype=int)
+    return np.linspace(0, size - 1, num=max_points, dtype=int)
+
+
+def _downsample_curve(values, max_points: int):
+    arr = np.asarray(values, dtype=np.float64)
+    if arr.size == 0:
+        return np.asarray([], dtype=int), arr
+    idx = _downsample_indices(arr.size, max_points)
+    return idx, arr[idx]
+
+
+def _downsample_values(values, max_points: int):
+    arr = np.asarray(values, dtype=np.float32).reshape(-1)
+    if arr.size == 0 or max_points <= 0 or arr.size <= max_points:
+        return arr
+    idx = _downsample_indices(arr.size, max_points)
+    return arr[idx]
+
+
 class WandbEvalCallback(BaseCallback):
     """
     Runs evaluation episodes every eval_freq steps and logs results to W&B.
@@ -43,6 +67,13 @@ class WandbEvalCallback(BaseCallback):
         eval_freq=10_000,
         n_eval_episodes=1,
         deterministic=True,
+        log_eval_curves: bool = True,
+        log_baseline_curves: bool = True,
+        log_action_hist: bool = True,
+        log_debug: bool = False,
+        wandb_curve_max_points: int = 300,
+        wandb_action_hist_freq: int = 8192,
+        wandb_hist_max_points: int = 2000,
         verbose=0,
     ):
         super().__init__(verbose)
@@ -50,18 +81,101 @@ class WandbEvalCallback(BaseCallback):
         self.eval_freq = eval_freq
         self.n_eval_episodes = n_eval_episodes
         self.deterministic = deterministic
+        self.log_eval_curves = bool(log_eval_curves)
+        self.log_baseline_curves = bool(log_baseline_curves)
+        self.log_action_hist = bool(log_action_hist)
+        self.log_debug = bool(log_debug)
+        self.curve_max_points = max(int(wandb_curve_max_points), 0)
+        self.action_hist_freq = max(int(wandb_action_hist_freq), 0)
+        self.hist_max_points = max(int(wandb_hist_max_points), 0)
+        self._baseline_logged = False
+        self._baseline_return_pct = None
+        self._baseline_sma_return_pct = None
+        self._baseline_end_pv = None
+        self._bh_curve = None
+        self._sma_curve = None
+
+    def _ensure_baselines(self) -> None:
+        if self._bh_curve is not None and self._sma_curve is not None:
+            return
+
+        venv = getattr(self.eval_env, "venv", self.eval_env)
+        base_env = venv.envs[0].unwrapped
+        prices = base_env.prices
+
+        trade_cost = 0.001
+        initial_cash = 1_000_000.0
+        cfg = getattr(base_env, "config", None)
+        if cfg is not None:
+            trade_cost = float(getattr(cfg, "trading_cost_pct", trade_cost))
+            initial_cash = float(getattr(cfg, "initial_cash", initial_cash))
+
+        bh_curve = compute_buy_and_hold(
+            prices, cost=trade_cost, include_exit_cost=False
+        )
+        sma_curve = compute_sma_crossover(prices, cost=trade_cost)
+
+        self._bh_curve = bh_curve
+        self._sma_curve = sma_curve
+        self._baseline_return_pct = float((bh_curve[-1] - 1) * 100)
+        self._baseline_sma_return_pct = float((sma_curve[-1] - 1) * 100)
+        self._baseline_end_pv = float(initial_cash * bh_curve[-1])
+
+    def _log_baseline_curves(self, step: int) -> None:
+        if not self.log_baseline_curves or self.curve_max_points == 0:
+            return
+        if self._bh_curve is None or self._sma_curve is None:
+            return
+
+        xs_bh, ys_bh = _downsample_curve(self._bh_curve, self.curve_max_points)
+        xs_sma, ys_sma = _downsample_curve(self._sma_curve, self.curve_max_points)
+
+        wandb.log(
+            {
+                "baseline/buy_and_hold_curve": wandb.plot.line_series(
+                    xs=xs_bh.tolist(),
+                    ys=[ys_bh.tolist()],
+                    keys=["buy_and_hold"],
+                    title="Buy & Hold",
+                    xname="step",
+                ),
+                "baseline/sma_curve": wandb.plot.line_series(
+                    xs=xs_sma.tolist(),
+                    ys=[ys_sma.tolist()],
+                    keys=["sma"],
+                    title="SMA Baseline",
+                    xname="step",
+                ),
+            },
+            step=step,
+        )
+
+    def _on_training_start(self):
+        if wandb.run is None:
+            return
+        self._ensure_baselines()
+        if not self._baseline_logged:
+            self._log_baseline_curves(step=0)
+            self._baseline_logged = True
 
     # ------------------------------
     # TRAIN-STEP CALLBACK
     # ------------------------------
 
     def _on_step(self):
-        if self.num_timesteps % 8192 == 0:
+        if wandb.run is None:
+            return True
+
+        if (
+            self.log_action_hist
+            and self.action_hist_freq > 0
+            and self.num_timesteps % self.action_hist_freq == 0
+        ):
             actions = self.locals.get("actions", None)
             if actions is not None:
                 a = np.asarray(actions, dtype=np.float32)
                 # flatten all envs + action dims
-                flat = a.reshape(-1)
+                flat = _downsample_values(a.reshape(-1), self.hist_max_points)
                 if flat.size > 0:
                     wandb.log(
                         {
@@ -70,7 +184,8 @@ class WandbEvalCallback(BaseCallback):
                             "train/action_min": float(flat.min()),
                             "train/action_max": float(flat.max()),
                             "train/action_hist": wandb.Histogram(flat),
-                        }
+                        },
+                        step=int(self.num_timesteps),
                     )
 
         if self.eval_freq > 0 and self.num_timesteps % self.eval_freq == 0:
@@ -83,8 +198,49 @@ class WandbEvalCallback(BaseCallback):
     # ------------------------------
 
     def _run_eval(self):
-        curves = []
-        returns = []
+        if wandb.run is None:
+            return
+
+        step = int(self.num_timesteps)
+
+        self._ensure_baselines()
+
+        if not self._baseline_logged:
+            baseline_log = {
+                "baseline/buy_and_hold_return_pct": float(self._baseline_return_pct)
+                if self._baseline_return_pct is not None
+                else np.nan,
+                "baseline/sma_return_pct": float(self._baseline_sma_return_pct)
+                if self._baseline_sma_return_pct is not None
+                else np.nan,
+            }
+            if self.log_baseline_curves and self.curve_max_points != 0:
+                xs_bh, ys_bh = _downsample_curve(
+                    self._bh_curve, self.curve_max_points
+                )
+                xs_sma, ys_sma = _downsample_curve(
+                    self._sma_curve, self.curve_max_points
+                )
+                baseline_log.update(
+                    {
+                        "baseline/buy_and_hold_curve": wandb.plot.line_series(
+                            xs=xs_bh.tolist(),
+                            ys=[ys_bh.tolist()],
+                            keys=["buy_and_hold"],
+                            title="Buy & Hold",
+                            xname="step",
+                        ),
+                        "baseline/sma_curve": wandb.plot.line_series(
+                            xs=xs_sma.tolist(),
+                            ys=[ys_sma.tolist()],
+                            keys=["sma"],
+                            title="SMA Baseline",
+                            xname="step",
+                        ),
+                    }
+                )
+            wandb.log(baseline_log, step=step)
+            self._baseline_logged = True
 
         ep_returns = []
         ep_mdds = []
@@ -92,29 +248,6 @@ class WandbEvalCallback(BaseCallback):
         ep_abs_trade_values = []
         ep_turnovers = []
         ep_trades_counts = []
-
-        # Resolve underlying env to access prices
-        venv = getattr(
-            self.eval_env, "venv", self.eval_env
-        )  # unwrap VecNormalize if present
-        base_env = venv.envs[0].unwrapped
-        prices = base_env.prices
-
-        trade_cost = 0.001
-        cfg = getattr(base_env, "config", None)
-        if cfg is not None:
-            trade_cost = float(getattr(cfg, "trading_cost_pct", trade_cost))
-
-        # Precompute baselines once
-        bh_curve = compute_buy_and_hold(prices, cost=trade_cost, include_exit_cost=True)
-        sma_curve = compute_sma_crossover(prices, cost=trade_cost)
-
-        wandb.log(
-            {
-                "baseline/buy_and_hold_return_pct": float((bh_curve[-1] - 1) * 100),
-                "baseline/sma_return_pct": float((sma_curve[-1] - 1) * 100),
-            }
-        )
 
         for ep in range(self.n_eval_episodes):
             out = self.eval_env.reset()
@@ -174,7 +307,7 @@ class WandbEvalCallback(BaseCallback):
                     done0 = bool(dones[i0] or truncs[i0])
 
                 # optional debug every N steps
-                if step_idx % 200 == 0:
+                if self.log_debug and step_idx % 200 == 0:
                     wandb.log(
                         {
                             "debug/eval_action_target_weight_env0": float(
@@ -189,7 +322,8 @@ class WandbEvalCallback(BaseCallback):
                             "debug/eval_portfolio_value_env0": float(
                                 info0.get("portfolio_value", pv_curve[-1])
                             ),
-                        }
+                        },
+                        step=step,
                     )
                 step_idx += 1
 
@@ -212,17 +346,25 @@ class WandbEvalCallback(BaseCallback):
             ep_trades_counts.append(int(trades_count))
 
             # optional: log curve
-            wandb.log(
-                {
-                    f"eval/portfolio_curve_ep{ep}": wandb.plot.line_series(
-                        xs=list(range(len(pv_curve))),
-                        ys=[pv_curve],
-                        keys=[f"episode_{ep}"],
-                        title="Evaluation Portfolio Value",
-                        xname="step",
-                    )
-                }
-            )
+            if self.log_eval_curves and ep == 0 and self.curve_max_points != 0:
+                xs_eval, ys_eval = _downsample_curve(pv_curve, self.curve_max_points)
+                keys = ["episode_0"]
+                ys = [ys_eval.tolist()]
+                if self._baseline_end_pv is not None:
+                    keys.append("buy_and_hold_end")
+                    ys.append([float(self._baseline_end_pv)] * len(xs_eval))
+                wandb.log(
+                    {
+                        "eval/portfolio_curve": wandb.plot.line_series(
+                            xs=xs_eval.tolist(),
+                            ys=ys,
+                            keys=keys,
+                            title="Evaluation Portfolio Value",
+                            xname="step",
+                        )
+                    },
+                    step=step,
+                )
 
         # Summary statistics
         ret_pct = [r * 100 for r in ep_returns]
@@ -255,25 +397,12 @@ class WandbEvalCallback(BaseCallback):
                 "eval/median_abs_trade_value": float(np.median(ep_abs_trade_values)),
                 "eval/mean_trades_count": float(np.mean(ep_trades_counts)),
                 "eval/median_trades_count": float(np.median(ep_trades_counts)),
-            }
-        )
-
-        # Log baselines curves at the end of evaluation
-        wandb.log(
-            {
-                "baseline/buy_and_hold_curve": wandb.plot.line_series(
-                    xs=list(range(len(bh_curve))),
-                    ys=[bh_curve],
-                    keys=["buy_and_hold"],
-                    title="Buy & Hold",
-                    xname="step",
-                ),
-                "baseline/sma_curve": wandb.plot.line_series(
-                    xs=list(range(len(sma_curve))),
-                    ys=[sma_curve],
-                    keys=["sma"],
-                    title="SMA Baseline",
-                    xname="step",
-                ),
-            }
+                "baseline/buy_and_hold_return_pct": float(self._baseline_return_pct)
+                if self._baseline_return_pct is not None
+                else np.nan,
+                "baseline/sma_return_pct": float(self._baseline_sma_return_pct)
+                if self._baseline_sma_return_pct is not None
+                else np.nan,
+            },
+            step=step,
         )

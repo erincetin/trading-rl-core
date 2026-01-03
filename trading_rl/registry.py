@@ -14,12 +14,7 @@ from typing import Callable, Dict, Tuple
 import numpy as np
 from stable_baselines3 import A2C, PPO, SAC, TD3
 from stable_baselines3.common.noise import NormalActionNoise
-from stable_baselines3.common.vec_env import (
-    DummyVecEnv,
-    SubprocVecEnv,
-    VecEnv,
-    VecNormalize,
-)
+from stable_baselines3.common.vec_env import DummyVecEnv, VecEnv, VecNormalize
 
 from trading_rl.envs.trading_env import TradingEnv, TradingEnvConfig
 from trading_rl.envs.windowed_wrapper import (
@@ -126,9 +121,10 @@ def _make_windowed_env(
         reward_scaling=float(cfg.get("reward_scaling", 1.0)),
         initial_cash=float(cfg.get("initial_cash", 1_000_000.0)),
         max_position=float(cfg.get("max_position", 1.0)),
+        allow_leverage=bool(cfg.get("allow_leverage", False)),
+        action_transform=str(cfg.get("action_transform", "identity")),
         obs_include_cash=bool(cfg.get("obs_include_cash", True)),
         obs_include_position=bool(cfg.get("obs_include_position", True)),
-        obs_include_time=bool(cfg.get("obs_include_time", True)),
         obs_include_pnl=bool(cfg.get("obs_include_pnl", True)),
         obs_lookback=int(cfg.get("obs_lookback", 1)),
     )
@@ -174,9 +170,10 @@ def _make_vanilla_env(
         reward_scaling=float(cfg.get("reward_scaling", 1.0)),
         initial_cash=float(cfg.get("initial_cash", 1_000_000.0)),
         max_position=float(cfg.get("max_position", 1.0)),
+        allow_leverage=bool(cfg.get("allow_leverage", False)),
+        action_transform=str(cfg.get("action_transform", "identity")),
         obs_include_cash=bool(cfg.get("obs_include_cash", True)),
         obs_include_position=bool(cfg.get("obs_include_position", True)),
-        obs_include_time=bool(cfg.get("obs_include_time", True)),
         obs_include_pnl=bool(cfg.get("obs_include_pnl", True)),
         obs_lookback=int(cfg.get("obs_lookback", 1)),
     )
@@ -210,13 +207,8 @@ def _build_vec_env(env_fns, vec_env_type: str):
     if vec_env_type == "dummy":
         return DummyVecEnv(env_fns)
 
-    if vec_env_type == "subproc":
-        # On Windows, SubprocVecEnv uses spawn; keep this only if needed.
-        # It should work as long as you run from a __main__-guarded entrypoint (you do).
-        return SubprocVecEnv(env_fns, start_method="spawn")
-
     raise ValueError(
-        f"Unknown vec_env_type='{vec_env_type}'. Use 'dummy' or 'subproc'."
+        f"Unknown vec_env_type='{vec_env_type}'. Only 'dummy' is supported."
     )
 
 

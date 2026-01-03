@@ -54,6 +54,13 @@ class ExperimentConfig:
     checkpoint: str | None = None
     sb3_log_interval: int | None = None
     output_dir: str = "models"
+    wandb_log_eval_curves: bool = False
+    wandb_log_baseline_curves: bool = False
+    wandb_log_action_hist: bool = False
+    wandb_log_debug: bool = False
+    wandb_curve_max_points: int = 300
+    wandb_action_hist_freq: int = 8192
+    wandb_hist_max_points: int = 2000
 
     def sb3_params(self) -> Dict[str, Any]:
         """Params passed to SB3 constructor."""
@@ -102,6 +109,29 @@ def build_experiment_config(
     else:
         group = f"{algo}-{env_name}-{regime_name}"
 
+    wandb_log_eval_curves = getattr(args, "wandb_log_eval_curves", None)
+    if wandb_log_eval_curves is None:
+        wandb_log_eval_curves = False
+    wandb_log_baseline_curves = getattr(args, "wandb_log_baseline_curves", None)
+    if wandb_log_baseline_curves is None:
+        wandb_log_baseline_curves = False
+    wandb_log_action_hist = getattr(args, "wandb_log_action_hist", None)
+    if wandb_log_action_hist is None:
+        wandb_log_action_hist = False
+    wandb_log_debug = getattr(args, "wandb_log_debug", None)
+    if wandb_log_debug is None:
+        wandb_log_debug = False
+
+    wandb_curve_max_points = getattr(args, "wandb_curve_max_points", None)
+    if wandb_curve_max_points is None:
+        wandb_curve_max_points = 300
+    wandb_action_hist_freq = getattr(args, "wandb_action_hist_freq", None)
+    if wandb_action_hist_freq is None:
+        wandb_action_hist_freq = 8192
+    wandb_hist_max_points = getattr(args, "wandb_hist_max_points", None)
+    if wandb_hist_max_points is None:
+        wandb_hist_max_points = 2000
+
     return ExperimentConfig(
         # identity
         name=exp_name,
@@ -137,4 +167,11 @@ def build_experiment_config(
         checkpoint=args.checkpoint,
         sb3_log_interval=args.sb3_log_interval,
         output_dir=args.output_dir,
+        wandb_log_eval_curves=bool(wandb_log_eval_curves),
+        wandb_log_baseline_curves=bool(wandb_log_baseline_curves),
+        wandb_log_action_hist=bool(wandb_log_action_hist),
+        wandb_log_debug=bool(wandb_log_debug),
+        wandb_curve_max_points=int(wandb_curve_max_points),
+        wandb_action_hist_freq=int(wandb_action_hist_freq),
+        wandb_hist_max_points=int(wandb_hist_max_points),
     )

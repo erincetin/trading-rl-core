@@ -13,6 +13,8 @@ class WandbCallback(BaseCallback):
         super().__init__(verbose)
         self.log_freq = int(log_freq)
         self._ep_rewards = None  # per-env running episode rewards
+        self._action_low = None
+        self._action_high = None
 
     def _on_training_start(self):
         if wandb.run is None:
@@ -32,8 +34,17 @@ class WandbCallback(BaseCallback):
             "train/done_count",
             "train/episode_reward_mean",
             "train/episode_reward_median",
+            "train/action_clip_rate",
         ]:
             wandb.define_metric(k, step_metric="train/step")
+
+        try:
+            space = self.training_env.action_space
+            self._action_low = np.asarray(space.low, dtype=np.float32)
+            self._action_high = np.asarray(space.high, dtype=np.float32)
+        except Exception:
+            self._action_low = None
+            self._action_high = None
 
     def _on_step(self):
         infos = self.locals.get("infos", None)
@@ -82,6 +93,17 @@ class WandbCallback(BaseCallback):
             if dones is not None:
                 done_arr = np.asarray(dones, dtype=bool).reshape(-1)
                 log["train/done_count"] = int(done_arr.sum())
+
+            if self._action_low is not None and self._action_high is not None:
+                actions = self.locals.get("actions", None)
+                if actions is not None:
+                    a = np.asarray(actions, dtype=np.float32)
+                    if a.ndim == 1:
+                        a = a.reshape(-1, 1)
+                    low = self._action_low.reshape(1, -1)
+                    high = self._action_high.reshape(1, -1)
+                    clip_rate = float(np.mean((a < low) | (a > high)))
+                    log["train/action_clip_rate"] = clip_rate
 
             wandb.log(log)
 

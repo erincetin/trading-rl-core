@@ -14,10 +14,11 @@ class TradingEnvConfig:
     initial_cash: float = 1_000_000.0
     trading_cost_pct: float = 0.001  # 0.1%
     max_position: float = 1.0  # long-only, max 100% of portfolio in asset
+    allow_leverage: bool = False
+    action_transform: str = "identity"  # identity | symmetric
     reward_scaling: float = 1.0  # optionally scale rewards
     obs_include_cash: bool = True
     obs_include_position: bool = True
-    obs_include_time: bool = True
     obs_include_pnl: bool = True
     obs_lookback: int = 1
     reward_mode: str = "log_return"
@@ -62,21 +63,34 @@ class TradingEnv(gym.Env):
         self.config = config or TradingEnvConfig()
         if int(self.config.obs_lookback) < 1:
             raise ValueError("obs_lookback must be >= 1")
+        if float(self.config.max_position) <= 0:
+            raise ValueError("max_position must be > 0")
+        if self.config.max_position > 1.0 and not self.config.allow_leverage:
+            raise ValueError("max_position > 1 requires allow_leverage=True")
+        action_transform = (self.config.action_transform or "identity").lower()
+        if action_transform not in {"identity", "symmetric"}:
+            raise ValueError("action_transform must be 'identity' or 'symmetric'")
+        self._action_transform = action_transform
 
-        # Action: target allocation to asset in [0, max_position] (long-only)
-        self.action_space = spaces.Box(
-            low=np.array([0.0], dtype=np.float32),
-            high=np.array([self.config.max_position], dtype=np.float32),
-            dtype=np.float32,
-        )
+        if self._action_transform == "symmetric":
+            self.action_space = spaces.Box(
+                low=np.array([-1.0], dtype=np.float32),
+                high=np.array([1.0], dtype=np.float32),
+                dtype=np.float32,
+            )
+        else:
+            # Action: target allocation to asset in [0, max_position] (long-only)
+            self.action_space = spaces.Box(
+                low=np.array([0.0], dtype=np.float32),
+                high=np.array([self.config.max_position], dtype=np.float32),
+                dtype=np.float32,
+            )
 
-        # Observation: features + (optional) [cash_frac, position_frac, time_frac]
+        # Observation: features + (optional) [cash_frac, position_frac, pnl_frac]
         obs_dim = self.F * int(self.config.obs_lookback)
         if self.config.obs_include_cash:
             obs_dim += 1
         if self.config.obs_include_position:
-            obs_dim += 1
-        if self.config.obs_include_time:
             obs_dim += 1
         if self.config.obs_include_pnl:
             obs_dim += 1
@@ -137,14 +151,17 @@ class TradingEnv(gym.Env):
         3. Trade from current position to target position at price_t, paying cost.
         4. Move to t+1, revalue portfolio, compute reward.
         """
-        # Clip action to valid range
         if isinstance(action, (list, tuple, np.ndarray)):
-            a = float(
-                np.clip(action[0], self.action_space.low[0], self.action_space.high[0])
-            )
+            raw = float(action[0])
+        else:
+            raw = float(action)
+
+        if self._action_transform == "symmetric":
+            clipped = float(np.clip(raw, -1.0, 1.0))
+            a = (clipped + 1.0) * 0.5 * float(self.config.max_position)
         else:
             a = float(
-                np.clip(action, self.action_space.low[0], self.action_space.high[0])
+                np.clip(raw, self.action_space.low[0], self.action_space.high[0])
             )
 
         price_t = float(self.prices[self._t])
@@ -284,10 +301,6 @@ class TradingEnv(gym.Env):
             asset_value = self._position * price_t
             pos_frac = asset_value / max(self._portfolio_value, 1e-8)
             obs_list.append(np.array([pos_frac], dtype=np.float32))
-
-        if self.config.obs_include_time:
-            time_frac = self._t / max(self.T - 1, 1)
-            obs_list.append(np.array([time_frac], dtype=np.float32))
 
         if self.config.obs_include_pnl:
             unrealized = (price_t - self._avg_entry_price) * self._position

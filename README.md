@@ -35,8 +35,9 @@ By default it reads `scripts/config.yaml`, which uses:
 - `experiments.<algo>.algo`: SB3 params per algorithm
 - `experiments.<algo>.env`: per‑algo env overrides
 - `experiments.<algo>.run`: per‑algo run overrides (e.g., `total_timesteps`)
-- `run`: global run settings (envs, seeds/repeats, eval cadence, logging)
+- `run`: global run settings (envs, seeds/repeats, eval cadence, logging + W&B curve/downsample toggles)
 - `regimes`: list of train/eval date slices
+- `env.action_transform`: `identity` or `symmetric` (maps [-1, 1] -> [0, max_position] for PPO/A2C)
 
 Examples:
 ```bash
@@ -91,4 +92,9 @@ Outputs:
 ## Tests
 ```bash
 uv run pytest
+```
+
+## Parallelism estimate
+```bash
+uv run python scripts/parallel_estimator.py --algos sac
 ```
