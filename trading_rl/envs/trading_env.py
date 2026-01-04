@@ -19,6 +19,7 @@ class TradingEnvConfig:
     reward_scaling: float = 1.0  # optionally scale rewards
     obs_include_cash: bool = True
     obs_include_position: bool = True
+    obs_include_time: bool = False
     obs_include_pnl: bool = True
     obs_lookback: int = 1
     reward_mode: str = "log_return"
@@ -86,11 +87,13 @@ class TradingEnv(gym.Env):
                 dtype=np.float32,
             )
 
-        # Observation: features + (optional) [cash_frac, position_frac, pnl_frac]
+        # Observation: features + (optional) [cash_frac, position_frac, time_frac, pnl_frac]
         obs_dim = self.F * int(self.config.obs_lookback)
         if self.config.obs_include_cash:
             obs_dim += 1
         if self.config.obs_include_position:
+            obs_dim += 1
+        if self.config.obs_include_time:
             obs_dim += 1
         if self.config.obs_include_pnl:
             obs_dim += 1
@@ -301,6 +304,11 @@ class TradingEnv(gym.Env):
             asset_value = self._position * price_t
             pos_frac = asset_value / max(self._portfolio_value, 1e-8)
             obs_list.append(np.array([pos_frac], dtype=np.float32))
+
+        if self.config.obs_include_time:
+            denom = max(self.T - 1, 1)
+            time_frac = float(self._t) / float(denom)
+            obs_list.append(np.array([time_frac], dtype=np.float32))
 
         if self.config.obs_include_pnl:
             unrealized = (price_t - self._avg_entry_price) * self._position

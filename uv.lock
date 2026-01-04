@@ -1585,7 +1585,7 @@ wheels = [
 [[package]]
 name = "trading-rl-core"
 version = "0.1.0"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
     { name = "alpaca-py" },
     { name = "dotenv" },
@@ -1600,7 +1600,7 @@ dependencies = [
 ]
 
 [package.dev-dependencies]
-cuda126 = [
+cuda = [
     { name = "torch" },
     { name = "torchaudio" },
     { name = "torchvision" },
@@ -1626,7 +1626,7 @@ requires-dist = [
 ]
 
 [package.metadata.requires-dev]
-cuda126 = [
+cuda = [
     { name = "torch" },
     { name = "torchaudio" },
     { name = "torchvision" },

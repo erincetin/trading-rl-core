@@ -12,21 +12,16 @@ uv sync
 
 Heads-up: `uv sync` installs a CPU-only PyTorch build by default. If you want GPU training, install a CUDA-enabled PyTorch wheel in the venv after syncing:
 ```bash
-# Pick the index URL that matches your CUDA runtime (cu118/cu121/cu124)
-uv pip install --upgrade torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
-```
-
-Optional GPU deps (CUDA 12.6 group):
-```bash
-# Installs the optional group, then swap to CUDA wheels for GPU machines
-uv sync --group cuda126
-uv pip install --upgrade torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
+# Pick the index URL that matches your CUDA runtime (/cu128/cu130), then
+uv pip install --upgrade torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu130
+uv sync --group cuda
 ```
 
 Env vars (for Alpaca fetches), set these at `.env`:
 ```
 ALPACA_API_KEY=...
 ALPACA_API_SECRET=...
+APCA_API_BASE_URL= 'https://paper-api.alpaca.markets'
 ```
 
 ## Run experiments
