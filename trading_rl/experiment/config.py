@@ -42,6 +42,7 @@ class ExperimentConfig:
 
     # logging
     project: str
+    entity: str | None
     group: str | None
     run_name: str | None
 
@@ -61,6 +62,7 @@ class ExperimentConfig:
     wandb_curve_max_points: int = 300
     wandb_action_hist_freq: int = 8192
     wandb_hist_max_points: int = 2000
+    wandb_sync_on_end: bool = False
 
     def sb3_params(self) -> Dict[str, Any]:
         """Params passed to SB3 constructor."""
@@ -132,6 +134,10 @@ def build_experiment_config(
     if wandb_hist_max_points is None:
         wandb_hist_max_points = 2000
 
+    wandb_sync_on_end = getattr(args, "wandb_sync_on_end", None)
+    if wandb_sync_on_end is None:
+        wandb_sync_on_end = False
+
     return ExperimentConfig(
         # identity
         name=exp_name,
@@ -157,6 +163,7 @@ def build_experiment_config(
         vecnormalize_params=vecnorm_params,
         # logging
         project=args.project,
+        entity=getattr(args, "entity", None),
         group=group,
         run_name=args.run_name,
         normalize=normalize,
@@ -174,4 +181,5 @@ def build_experiment_config(
         wandb_curve_max_points=int(wandb_curve_max_points),
         wandb_action_hist_freq=int(wandb_action_hist_freq),
         wandb_hist_max_points=int(wandb_hist_max_points),
+        wandb_sync_on_end=bool(wandb_sync_on_end),
     )

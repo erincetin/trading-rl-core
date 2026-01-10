@@ -12,6 +12,8 @@ Behavior:
 from __future__ import annotations
 
 import argparse
+import os
+import multiprocessing
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
@@ -20,10 +22,10 @@ from typing import Iterable, List, Sequence
 
 from trading_rl.config.hyperparams import load_hyperparams
 from trading_rl.data.alpaca_loader import AlpacaConfig
-from trading_rl.data.indicators import add_talib_indicators
 from trading_rl.data.loader import prepare_market_arrays
 from trading_rl.experiment.config import build_experiment_config
 from trading_rl.experiment.data_pipeline import (
+    build_features_cached,
     load_market_data,
     split_train_eval,
     ts_like_index,
@@ -84,6 +86,7 @@ def _apply_run_cfg(args, run_cfg: dict, *, per_algo: bool) -> None:
             "wandb_curve_max_points",
             "wandb_action_hist_freq",
             "wandb_hist_max_points",
+            "wandb_sync_on_end",
             "sb3_log_interval",
             "output_dir",
         ]
@@ -107,6 +110,7 @@ def _apply_run_cfg(args, run_cfg: dict, *, per_algo: bool) -> None:
             "wandb_curve_max_points",
             "wandb_action_hist_freq",
             "wandb_hist_max_points",
+            "wandb_sync_on_end",
             "sb3_log_interval",
             "output_dir",
             "cache_dir",
@@ -117,16 +121,84 @@ def _apply_run_cfg(args, run_cfg: dict, *, per_algo: bool) -> None:
         if key not in run_cfg:
             continue
         if per_algo:
+            if key == "total_timesteps" and getattr(
+                args, "_total_timesteps_from_cli", False
+            ):
+                continue
             setattr(args, key, run_cfg[key])
         elif getattr(args, key) is None:
             setattr(args, key, run_cfg[key])
 
 
+def _apply_thread_limits(max_threads: int | None) -> None:
+    if not max_threads:
+        return
+    val = str(int(max_threads))
+    for key in (
+        "OMP_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "OPENBLAS_NUM_THREADS",
+        "NUMEXPR_NUM_THREADS",
+    ):
+        os.environ[key] = val
+    try:
+        import torch
+
+        torch.set_num_threads(int(max_threads))
+        torch.set_num_interop_threads(int(max_threads))
+    except Exception:
+        pass
+
+
+def _feature_cache_key(args) -> str:
+    if args.csv_path:
+        try:
+            stat = os.stat(args.csv_path)
+            return f"csv:{args.csv_path}:{stat.st_mtime_ns}:{stat.st_size}"
+        except OSError:
+            return f"csv:{args.csv_path}:missing"
+    return (
+        f"alpaca:{args.symbol}:{args.timeframe}:{args.start}:{args.end}:"
+        f"warmup={args.warmup_days}"
+    )
+
+
+def _normalize_timesteps(value):
+    if isinstance(value, (list, tuple)):
+        return [int(v) for v in value]
+    return None
+
+
+def _terminate_executor(executor: ProcessPoolExecutor) -> None:
+    # Best-effort cleanup to avoid orphaned worker processes on Ctrl+C.
+    processes = getattr(executor, "_processes", {}) or {}
+    for proc in processes.values():
+        try:
+            if proc.is_alive():
+                proc.terminate()
+        except Exception:
+            pass
+    for proc in processes.values():
+        try:
+            proc.join(timeout=2)
+        except Exception:
+            pass
+
+
 def _run_combo(args, combo: dict) -> None:
+    _apply_thread_limits(getattr(args, "max_threads", None))
     # apply regime -> returns args-like object with overrides + regime_name
     rargs = apply_regime(args, combo["regime"])
     run_cfg = _resolve_run_cfg(args.hyperparams_data or {}, combo["algo"])
     _apply_run_cfg(rargs, run_cfg, per_algo=True)
+    if "total_timesteps" in combo:
+        rargs.total_timesteps = int(combo["total_timesteps"])
+        if getattr(rargs, "run_name", None) is None:
+            rargs.run_name = (
+                f"{combo['algo']}-{combo['env']}-"
+                f"{combo['regime'].get('name', 'default')}-"
+                f"seed{combo['seed']}-steps{rargs.total_timesteps}"
+            )
 
     # data
     df_raw = load_market_data(
@@ -142,7 +214,11 @@ def _run_combo(args, combo: dict) -> None:
             cache_dir=rargs.cache_dir,
         ),
     )
-    df_feat = add_talib_indicators(df_raw)
+    df_feat = build_features_cached(
+        df_raw,
+        cache_dir=rargs.cache_dir,
+        cache_key=_feature_cache_key(rargs),
+    )
 
     start_ts = ts_like_index(df_feat, rargs.start)
     end_ts = ts_like_index(df_feat, rargs.end)
@@ -202,15 +278,23 @@ def expand_matrix(
     algos: Sequence[str],
     envs: Sequence[str],
     seeds: Sequence[int],
+    timesteps: Sequence[int] | None = None,
 ):
     combos = []
     for regime in regimes:
         for algo in algos:
             for env in envs:
                 for seed in seeds:
-                    combos.append(
-                        {"regime": regime, "algo": algo, "env": env, "seed": int(seed)}
-                    )
+                    for ts in (timesteps or [None]):
+                        combo = {
+                            "regime": regime,
+                            "algo": algo,
+                            "env": env,
+                            "seed": int(seed),
+                        }
+                        if ts is not None:
+                            combo["total_timesteps"] = int(ts)
+                        combos.append(combo)
     return combos
 
 
@@ -311,10 +395,28 @@ def parse_args():
         help="Log train metrics to W&B every N steps.",
     )
     parser.add_argument(
+        "--enable-wandb-curves",
+        action="store_true",
+        default=None,
+        help="Enable W&B eval/baseline curves logging.",
+    )
+    parser.add_argument(
+        "--enable-wandb-action-hist",
+        action="store_true",
+        default=None,
+        help="Enable W&B action histogram logging.",
+    )
+    parser.add_argument(
         "--sb3-log-interval",
         type=int,
         default=None,
         help="SB3 logger dump interval (episodes).",
+    )
+    parser.add_argument(
+        "--wandb-sync-on-end",
+        action="store_true",
+        default=None,
+        help="Run W&B in offline mode and sync after each experiment finishes.",
     )
 
     parser.add_argument("--output-dir", type=str, default=None)
@@ -333,6 +435,12 @@ def parse_args():
         type=float,
         default=2.0,
         help="Delay (seconds) between launching parallel experiments.",
+    )
+    parser.add_argument(
+        "--max-threads",
+        type=int,
+        default=None,
+        help="Limit CPU threads for BLAS/OpenMP/Torch per process.",
     )
 
     # Single-regime fields (used only if no regimes are supplied)
@@ -382,6 +490,7 @@ def parse_args():
     )
 
     args = parser.parse_args()
+    args._total_timesteps_from_cli = args.total_timesteps is not None
 
     args.hyperparams_data = (
         load_hyperparams(args.hyperparams) if args.hyperparams else {}
@@ -401,6 +510,12 @@ def parse_args():
 
     args.algos = parse_list(args.algos)
     _apply_run_cfg(args, args.hyperparams_data.get("run", {}) or {}, per_algo=False)
+
+    if args.enable_wandb_curves:
+        args.wandb_log_eval_curves = True
+        args.wandb_log_baseline_curves = True
+    if args.enable_wandb_action_hist:
+        args.wandb_log_action_hist = True
 
     if args.envs is None:
         raise ValueError("envs not set. Add run.envs in config.yaml or pass --envs.")
@@ -440,6 +555,7 @@ def parse_args():
 
 def main():
     args = parse_args()
+    _apply_thread_limits(args.max_threads)
 
     # regimes priority:
     # 1) --regimes file (if provided / default file exists)
@@ -461,18 +577,30 @@ def main():
             raise ValueError(f"--regime '{wanted}' not found. Available: {available}")
         regimes = filtered
 
-    combos = expand_matrix(regimes, args.algos, args.envs, args.seeds)
+    timesteps = _normalize_timesteps(args.total_timesteps)
+    combos = expand_matrix(regimes, args.algos, args.envs, args.seeds, timesteps)
+    combos.sort(key=lambda c: c.get("total_timesteps", 0), reverse=True)
 
     if args.parallel and args.parallel > 1:
         args_dict = vars(args)
-        with ProcessPoolExecutor(max_workers=int(args.parallel)) as executor:
+        ctx = multiprocessing.get_context("spawn")
+        with ProcessPoolExecutor(
+            max_workers=int(args.parallel), mp_context=ctx
+        ) as executor:
             futures = []
-            for idx, combo in enumerate(combos):
-                if idx > 0 and args.parallel_delay:
-                    time.sleep(float(args.parallel_delay))
-                futures.append(executor.submit(_run_combo_worker, args_dict, combo))
-            for fut in as_completed(futures):
-                fut.result()
+            try:
+                for idx, combo in enumerate(combos):
+                    if idx > 0 and args.parallel_delay:
+                        time.sleep(float(args.parallel_delay))
+                    futures.append(executor.submit(_run_combo_worker, args_dict, combo))
+                for fut in as_completed(futures):
+                    fut.result()
+            except KeyboardInterrupt:
+                for fut in futures:
+                    fut.cancel()
+                executor.shutdown(cancel_futures=True)
+                _terminate_executor(executor)
+                raise SystemExit(1)
     else:
         for combo in combos:
             _run_combo(args, combo)

@@ -5,6 +5,7 @@ import pytest
 import trading_rl.experiment.data_pipeline as data_pipeline
 from trading_rl.data.alpaca_loader import AlpacaConfig
 from trading_rl.experiment.data_pipeline import (
+    build_features_cached,
     clip_to_range,
     load_market_data,
     split_train_eval,
@@ -149,3 +150,32 @@ def test_load_market_data_requires_alpaca_cfg_when_no_csv():
             csv_path=None,
             alpaca_cfg=None,
         )
+
+
+def test_build_features_cached_roundtrip(tmp_path, monkeypatch):
+    df_raw = _make_indexed_df(tz="UTC")
+    calls = {"count": 0}
+
+    def _fake_indicators(df):
+        calls["count"] += 1
+        out = df.copy()
+        out["feat"] = 1.0
+        return out
+
+    monkeypatch.setattr(data_pipeline, "add_talib_indicators", _fake_indicators)
+
+    cached = build_features_cached(
+        df_raw, cache_dir=str(tmp_path), cache_key="cache-key-1"
+    )
+    assert "feat" in cached.columns
+    assert calls["count"] == 1
+
+    def _should_not_run(_df):
+        raise AssertionError("indicator build should be cached")
+
+    monkeypatch.setattr(data_pipeline, "add_talib_indicators", _should_not_run)
+
+    cached2 = build_features_cached(
+        df_raw, cache_dir=str(tmp_path), cache_key="cache-key-1"
+    )
+    assert "feat" in cached2.columns

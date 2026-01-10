@@ -1,7 +1,10 @@
 # trading_rl/experiment/data_pipeline.py
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Tuple
+
+import hashlib
 
 import pandas as pd
 
@@ -88,6 +91,37 @@ def build_features(df_raw: pd.DataFrame) -> pd.DataFrame:
     Feature engineering step (currently TA-Lib indicators).
     """
     df_feat = add_talib_indicators(df_raw)
+    return df_feat
+
+
+def build_features_cached(
+    df_raw: pd.DataFrame,
+    *,
+    cache_dir: str | Path | None,
+    cache_key: str | None,
+) -> pd.DataFrame:
+    """
+    Build features with optional on-disk caching keyed by cache_key.
+    """
+    if not cache_dir or not cache_key:
+        return build_features(df_raw)
+
+    cache_root = Path(cache_dir) / "features"
+    cache_root.mkdir(parents=True, exist_ok=True)
+    digest = hashlib.sha256(cache_key.encode("utf-8")).hexdigest()
+    cache_path = cache_root / f"{digest}.pkl"
+
+    if cache_path.exists():
+        try:
+            return pd.read_pickle(cache_path)
+        except Exception:
+            pass
+
+    df_feat = build_features(df_raw)
+    try:
+        df_feat.to_pickle(cache_path)
+    except Exception:
+        pass
     return df_feat
 
 

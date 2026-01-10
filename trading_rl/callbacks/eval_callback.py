@@ -24,6 +24,13 @@ def _sharpe(step_returns: np.ndarray) -> float:
     return float(r.mean() / std)
 
 
+def _win_rate_pct(step_returns: np.ndarray) -> float:
+    r = np.asarray(step_returns, dtype=np.float64)
+    if r.size == 0:
+        return 0.0
+    return 100.0 * float(np.mean(r > 0.0))
+
+
 def _percentiles(x, ps=(10, 25, 50, 75, 90)):
     arr = np.asarray(x, dtype=np.float64)
     if arr.size == 0:
@@ -92,8 +99,15 @@ class WandbEvalCallback(BaseCallback):
         self._baseline_return_pct = None
         self._baseline_sma_return_pct = None
         self._baseline_end_pv = None
+        self._baseline_initial_cash = None
         self._bh_curve = None
         self._sma_curve = None
+        self._last_eval_curve = None
+        self._last_eval_return_pct = None
+        self._last_eval_step = None
+        self._best_eval_curve = None
+        self._best_eval_return_pct = None
+        self._best_eval_step = None
 
     def _ensure_baselines(self) -> None:
         if self._bh_curve is not None and self._sma_curve is not None:
@@ -120,6 +134,7 @@ class WandbEvalCallback(BaseCallback):
         self._baseline_return_pct = float((bh_curve[-1] - 1) * 100)
         self._baseline_sma_return_pct = float((sma_curve[-1] - 1) * 100)
         self._baseline_end_pv = float(initial_cash * bh_curve[-1])
+        self._baseline_initial_cash = initial_cash
 
     def _log_baseline_curves(self, step: int) -> None:
         if not self.log_baseline_curves or self.curve_max_points == 0:
@@ -147,7 +162,6 @@ class WandbEvalCallback(BaseCallback):
                     xname="step",
                 ),
             },
-            step=step,
         )
 
     def _on_training_start(self):
@@ -184,8 +198,7 @@ class WandbEvalCallback(BaseCallback):
                             "train/action_min": float(flat.min()),
                             "train/action_max": float(flat.max()),
                             "train/action_hist": wandb.Histogram(flat),
-                        },
-                        step=int(self.num_timesteps),
+                        }
                     )
 
         if self.eval_freq > 0 and self.num_timesteps % self.eval_freq == 0:
@@ -239,7 +252,7 @@ class WandbEvalCallback(BaseCallback):
                         ),
                     }
                 )
-            wandb.log(baseline_log, step=step)
+            wandb.log(baseline_log)
             self._baseline_logged = True
 
         ep_returns = []
@@ -248,6 +261,7 @@ class WandbEvalCallback(BaseCallback):
         ep_abs_trade_values = []
         ep_turnovers = []
         ep_trades_counts = []
+        all_step_rets = []
 
         for ep in range(self.n_eval_episodes):
             out = self.eval_env.reset()
@@ -322,8 +336,7 @@ class WandbEvalCallback(BaseCallback):
                             "debug/eval_portfolio_value_env0": float(
                                 info0.get("portfolio_value", pv_curve[-1])
                             ),
-                        },
-                        step=step,
+                        }
                     )
                 step_idx += 1
 
@@ -334,6 +347,8 @@ class WandbEvalCallback(BaseCallback):
             step_rets = pv_arr[1:] / np.maximum(pv_arr[:-1], 1e-12) - 1.0
             sharpe = _sharpe(step_rets)
             mdd = _max_drawdown(pv_arr)
+            if step_rets.size > 0:
+                all_step_rets.append(step_rets)
 
             turnover = float(abs_trade_value / max(pv_arr[0], 1e-12))
 
@@ -362,9 +377,11 @@ class WandbEvalCallback(BaseCallback):
                             title="Evaluation Portfolio Value",
                             xname="step",
                         )
-                    },
-                    step=step,
+                    }
                 )
+
+            if ep == 0:
+                ep0_curve = list(pv_curve)
 
         # Summary statistics
         ret_pct = [r * 100 for r in ep_returns]
@@ -372,6 +389,23 @@ class WandbEvalCallback(BaseCallback):
 
         ret_ps = _percentiles(ret_pct)
         mdd_ps = _percentiles(mdd_pct)
+        if all_step_rets:
+            step_rets_all = np.concatenate(all_step_rets)
+            win_rate_pct = _win_rate_pct(step_rets_all)
+        else:
+            win_rate_pct = 0.0
+
+        mean_return_pct = float(np.mean(ret_pct)) if ret_pct else 0.0
+        self._last_eval_return_pct = mean_return_pct
+        self._last_eval_step = step
+        if "ep0_curve" in locals():
+            self._last_eval_curve = ep0_curve
+            if self._best_eval_return_pct is None or (
+                mean_return_pct > self._best_eval_return_pct
+            ):
+                self._best_eval_return_pct = mean_return_pct
+                self._best_eval_step = step
+                self._best_eval_curve = ep0_curve
 
         wandb.log(
             {
@@ -382,8 +416,13 @@ class WandbEvalCallback(BaseCallback):
                 "eval/p25_return_pct": ret_ps["p25"],
                 "eval/p75_return_pct": ret_ps["p75"],
                 "eval/p90_return_pct": ret_ps["p90"],
-                "eval/win_rate_pct": 100.0
-                * float(np.mean(np.asarray(ep_returns) > 0.0)),
+                "eval/win_rate_pct": win_rate_pct,
+                "eval/buy_and_hold_return_pct": float(self._baseline_return_pct)
+                if self._baseline_return_pct is not None
+                else np.nan,
+                "eval/sma_return_pct": float(self._baseline_sma_return_pct)
+                if self._baseline_sma_return_pct is not None
+                else np.nan,
                 # risk
                 "eval/mean_max_drawdown_pct": float(np.mean(mdd_pct)),
                 "eval/median_max_drawdown_pct": mdd_ps["p50"],
@@ -403,6 +442,24 @@ class WandbEvalCallback(BaseCallback):
                 "baseline/sma_return_pct": float(self._baseline_sma_return_pct)
                 if self._baseline_sma_return_pct is not None
                 else np.nan,
-            },
-            step=step,
+            }
         )
+
+    def run_final_eval(self) -> None:
+        self._run_eval()
+
+    def get_performance_curves(self) -> dict:
+        self._ensure_baselines()
+        bh_curve = self._bh_curve
+        if bh_curve is not None and self._baseline_initial_cash is not None:
+            bh_curve = [self._baseline_initial_cash * v for v in bh_curve]
+        return {
+            "last_curve": self._last_eval_curve,
+            "last_return_pct": self._last_eval_return_pct,
+            "last_step": self._last_eval_step,
+            "best_curve": self._best_eval_curve,
+            "best_return_pct": self._best_eval_return_pct,
+            "best_step": self._best_eval_step,
+            "buy_and_hold_curve": bh_curve,
+            "buy_and_hold_return_pct": self._baseline_return_pct,
+        }

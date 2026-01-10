@@ -1,0 +1,85 @@
+experiments:
+  sac:
+    algo:
+      policy: MlpPolicy
+      policy_kwargs:
+        net_arch: [128, 128]
+        activation_fn: SiLU
+      device: auto
+      verbose: 0
+      learning_rate: 2.0e-4
+      buffer_size: 500000
+      batch_size: 256
+      gamma: 0.995
+      tau: 0.005
+      ent_coef: 0.05
+      train_freq: 4
+      gradient_steps: 1
+      learning_starts: 50000
+    run:
+      total_timesteps: 3000000
+    env:
+      n_envs_train: 1
+
+run:
+  envs: [windowed]
+  seeds: [13, 42, 67]
+  total_timesteps: 3000000
+  eval_freq: 8192
+  eval_episodes: 3
+  wandb_log_freq: 2048
+  wandb_log_eval_curves: false
+  wandb_log_baseline_curves: false
+  wandb_log_action_hist: false
+  wandb_log_debug: false
+  wandb_curve_max_points: 300
+  wandb_action_hist_freq: 8192
+  wandb_hist_max_points: 2000
+  sb3_log_interval: null
+  output_dir: models
+  cache_dir: data_cache
+  csv_path: null
+  normalize: null
+  vecnorm_path: null
+  resume: false
+  checkpoint: null
+
+vecnormalize:
+  enable: true
+  norm_obs: true
+  norm_reward: false
+  clip_obs: 10.0
+
+env:
+  trading_cost_pct: 0.001
+  reward_mode: log_return
+  reward_scaling: 10
+  window_size: 1024
+  random_start: true
+  n_envs_train: 1
+  n_envs_eval: 1
+  vec_env_type: dummy
+  obs_include_pnl: true
+  obs_lookback: 8
+  allow_leverage: false
+  action_transform: identity
+  verbose: 0
+
+regimes:
+  - name: btc_2023_trainM1-2_evalM3
+    symbol: BTCUSD
+    timeframe: 15Min
+    warmup_days: 30
+    start: "2022-01-01"
+    end: "2023-03-31"
+    eval_start: "2023-02-01"
+    eval_end: "2023-03-31"
+
+  - name: btc_2024_trainH1_evalQ3
+    symbol: BTCUSD
+    timeframe: 1Hour
+    warmup_days: 90
+    start: "2023-01-01"
+    end: "2024-09-30"
+    eval_start: "2024-07-01"
+    eval_end: "2024-09-30"
